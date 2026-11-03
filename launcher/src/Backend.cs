@@ -37,7 +37,7 @@ static class Paths
     // Written by build-launcher.ps1: the last commit that changed the launcher
     // this exe was built from. Absent in a dev build.
     public static readonly string SourceCommitFile = Path.Combine(AppContext.BaseDirectory, "source-commit.txt");
-    public const string RepoUrl = "https://github.com/RenanQueiroz/mcla-recomp";
+    public const string RepoUrl = "https://github.com/Razgriz1232/mcla-recomp";
     public const string IssuesUrl = "https://github.com/RenanQueiroz/mcla-recomp/issues";
     public const string UpstreamUrl = "https://github.com/holdmysocks/mcla-recomp";
     /// MinGit's cmd folder in an install made by the wizard (git.exe is not on that PC's PATH); else null. Looked for at

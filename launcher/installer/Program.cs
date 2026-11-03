@@ -302,7 +302,7 @@ static unsafe class Program
     /// Where to find this program again, for the messages that say to run it (an update's copy is in a folder the player never saw).
     static string WhereTheInstallerIs => $" This installer is {Environment.ProcessPath}; a new copy is on {ReleasesPage}.";
 
-    const string ReleasesPage = "https://github.com/RenanQueiroz/mcla-recomp/releases";
+    const string ReleasesPage = "https://github.com/Razgriz1232/mcla-recomp/releases";
 
     static int Install(Options o, string target)
     {

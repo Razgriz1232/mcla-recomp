@@ -608,7 +608,7 @@ static class Program
         var scenario = args[3];
         var releaseJson = File.ReadAllText(args[4]);
         var downloads = args.Length > 5 ? Path.GetFullPath(args[5]) : null;
-        const string repo = "RenanQueiroz/mcla-recomp";
+        const string repo = "Razgriz1232/mcla-recomp";
         using var web = new Server();
         using var api = new Server();
         var directPath = $"/{repo}/releases/latest/download/release.json";

@@ -128,7 +128,7 @@ sealed record OfflineFile(string Name, string Url, long Size, bool Present);
 sealed class ReleaseSource
 {
     /// The fork's repository, as the real source and the clone name it.
-    public const string Repository = "RenanQueiroz/mcla-recomp";
+    public const string Repository = "Razgriz1232/mcla-recomp";
     public const string EnvironmentVariable = "MCLA_RELEASE_SOURCE";
     /// How long GitHub has to answer a request, and how long a download may go without a byte.
     public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);

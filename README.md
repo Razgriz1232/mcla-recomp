@@ -4,6 +4,8 @@
 
 *Midnight Club: Los Angeles Complete Edition* (Xbox 360, title `545407F8`) running natively on a PC. This is a fork of [holdmysocks/mcla-recomp](https://github.com/holdmysocks/mcla-recomp), the static recompilation of the game to native code for Windows, Linux and jailbroken PS5 consoles, built on the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk). On top of upstream's `main` the fork adds performance work on both Windows renderers (Direct3D 12 and Vulkan) so that higher resolutions and frame rates hold, a Windows launcher with a setup wizard that builds, updates and starts the game, HDR, FSR 3.1 and frame generation, and several game fixes. The changes meant for upstream are offered there as pull requests over time.
 
+**Online play.** This repository, [Razgriz1232/mcla-recomp](https://github.com/Razgriz1232/mcla-recomp), is the fork with the **online patch**: the game's online modes (lobbies, matchmaking, races between players) work again through an online server with accounts, [mclaonline.com](https://mclaonline.com), where players sign up and get the game key the game signs in with; races earn XP and levels there. Its releases, with the installer, are on [this repository's releases page](https://github.com/Razgriz1232/mcla-recomp/releases/latest). How to play online: [docs/online.md](docs/online.md).
+
 **This repository contains no game code, assets or keys.** You supply your own legally obtained disc image (`.iso`); the game is built on your PC from it, and the recompiled code is generated locally and never committed. What you build is for you, not for sharing.
 
 ## Which release of the game
@@ -27,7 +29,7 @@ You need Windows 10 or 11 (x86-64) with a Direct3D 12 graphics card.
 
 ### Install
 
-Download **`MCLA-Setup.exe`** from the [latest release](https://github.com/RenanQueiroz/mcla-recomp/releases/latest) and run it. It installs the launcher for your Windows user (no administrator prompt) and adds Start menu and desktop shortcuts. The launcher then opens a **setup wizard**: pick a folder and your disc image, and it downloads the build tools, builds the game from your disc image and prepares the shaders. It needs the internet and about 10 GB of disk, and the folder's path can be at most 129 characters.
+Download **`MCLA-Setup.exe`** from the [latest release](https://github.com/Razgriz1232/mcla-recomp/releases/latest) and run it. It installs the launcher for your Windows user (no administrator prompt) and adds Start menu and desktop shortcuts. The launcher then opens a **setup wizard**: pick a folder and your disc image, and it downloads the build tools, builds the game from your disc image and prepares the shaders. It needs the internet and about 10 GB of disk, and the folder's path can be at most 129 characters.
 
 **The exe is not signed** (releases never are), so Windows SmartScreen may stop it the first time with *Windows protected your PC*: click **More info**, then **Run anyway**. If your browser holds the download back, choose **Keep**. Some antivirus programs distrust new unsigned installers; if one removes it, nothing is lost: the source of everything is here, and [docs/building.md](docs/building.md) builds it by hand. More about the wizard, checking the download and the launcher: [docs/install.md](docs/install.md).
 
@@ -84,7 +86,7 @@ Every switch (about 40, the graphics and timing internals too), what each does a
 | If | Then |
 |---|---|
 | SmartScreen stops `MCLA-Setup.exe` | **More info**, then **Run anyway**. |
-| The wizard or the launcher can't reach GitHub | **Copy details** says where it stopped. Try opening the [releases page](https://github.com/RenanQueiroz/mcla-recomp/releases/latest) in a browser, turn a VPN off or on, and check the proxy, the antivirus and the PC's date. The wizard's **Use files I downloaded** works from files you fetched yourself. |
+| The wizard or the launcher can't reach GitHub | **Copy details** says where it stopped. Try opening the [releases page](https://github.com/Razgriz1232/mcla-recomp/releases/latest) in a browser, turn a VPN off or on, and check the proxy, the antivirus and the PC's date. The wizard's **Use files I downloaded** works from files you fetched yourself. |
 | The game is choppy, or runs at a few frames a second, on a PC with two GPUs (a laptop above all) | It may be on the integrated GPU. Look for the lines starting `GPU:` in the log (below); if the name isn't your graphics card, set `mcla.exe` to *High performance* in Windows' *Settings › System › Display › Graphics* and open an issue with those lines. |
 | The game stays at 60 FPS or paces unevenly | Turn VSYNC off in the pause menu's DISPLAY. |
 | The launcher says *Shaders weren't prepared* | The game plays as before, compiling shaders as it meets them. The message says why; *More* › *Prepare shaders* tries again. |

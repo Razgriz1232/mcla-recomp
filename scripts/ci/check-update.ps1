@@ -44,7 +44,7 @@ param(
     [Parameter(Mandatory)][string]$Root,
     [Parameter(Mandatory)][string]$GameData,
     [Parameter(Mandatory)][string]$ToolsDir,
-    [string]$Origin = "https://github.com/RenanQueiroz/mcla-recomp.git",
+    [string]$Origin = "https://github.com/Razgriz1232/mcla-recomp.git",
     [int]$BuildTimeoutMin = 25,
     [switch]$PreflightOnly
 )

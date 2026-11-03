@@ -39,7 +39,7 @@ env:
 jobs:
   plan:
     name: Tag, version and checks
-    if: github.repository == 'RenanQueiroz/mcla-recomp'
+    if: github.repository == 'Razgriz1232/mcla-recomp'
     runs-on: windows-2025
     timeout-minutes: 15
     outputs:

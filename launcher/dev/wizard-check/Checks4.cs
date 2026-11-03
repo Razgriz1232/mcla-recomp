@@ -113,7 +113,7 @@ static partial class Program
 
         var files = source.OfflineFiles();
         Check("the SDK bundle and the four tool archives are listed with their addresses",
-              files.Count == 5 && files[0].Name == release.SdkBundle!.Asset && files[0].Url.StartsWith("https://github.com/RenanQueiroz/mcla-recomp/releases/download/") && files.Skip(1).All(f => f.Url.StartsWith("https://")),
+              files.Count == 5 && files[0].Name == release.SdkBundle!.Asset && files[0].Url.StartsWith($"https://github.com/{ReleaseSource.Repository}/releases/download/") && files.Skip(1).All(f => f.Url.StartsWith("https://")),
               string.Join(", ", files.Select(f => f.Name)));
         Check("none is present in an empty folder", files.All(f => !f.Present));
 
@@ -156,7 +156,7 @@ static partial class Program
         var source3 = ReleaseSource.FromDownloads(folder);
         await source3.LoadAsync(CancellationToken.None);
         Check("dev-source.json in the player's folder is ignored", source3.GitUrl == $"https://github.com/{ReleaseSource.Repository}.git", source3.GitUrl);
-        File.WriteAllText(Path.Combine(folder, "release.json"), original.Replace("\"repository\": \"RenanQueiroz/mcla-recomp\"", "\"repository\": \"someone/else\""));
+        File.WriteAllText(Path.Combine(folder, "release.json"), original.Replace($"\"repository\": \"{ReleaseSource.Repository}\"", "\"repository\": \"someone/else\""));
         try { await ReleaseSource.FromDownloads(folder).LoadAsync(CancellationToken.None); Check("a release.json from another repository is refused", false); }
         catch (SetupException ex) { Check("a release.json from another repository is refused", ex.Plain.Contains("someone/else"), ex.Plain); }
         File.WriteAllText(Path.Combine(folder, "release.json"), original.Replace("\"url\": \"https://github.com/Kitware", "\"url\": \"http://github.com/Kitware"));
