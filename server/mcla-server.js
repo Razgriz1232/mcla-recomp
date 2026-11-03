@@ -1577,8 +1577,14 @@ function listRides(by, gamer, from, count, xuid, exclude) {
     const x = normId(xuid);
     all = all.filter((r) => (x ? r.ownerXuid === x : r.owner.toLowerCase() === low));
   }
+  // `exclude` leaves the player's own rides out of the game's random pick. When nobody else has a
+  // ride, the pick falls back to the player's own: the game takes an empty pick for a server that is
+  // not available, so Rate Rides would never open while the player is the only one with a ride.
   const ex = normId(exclude);
-  if (ex) all = all.filter((r) => r.ownerXuid !== ex);
+  if (ex) {
+    const others = all.filter((r) => r.ownerXuid !== ex);
+    if (others.length || by !== 'random') all = others;
+  }
   if (by === 'random') {
     for (let i = all.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [all[i], all[j]] = [all[j], all[i]]; }
   } else if (by === 'new' || by === 'gamer') {
