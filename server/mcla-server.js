@@ -1119,11 +1119,12 @@ function ridePage(req, account, r, notice) {
   const mine = r.ratings && account ? (r.ratings[String(account.id)] || 0) : 0;
   const photo = r.photo ? `<img class="bigphoto" src="${BASE}/rides/${r.id}/photo" alt="">` : '<div class="nophoto big">no photo</div>';
   const own = account && r.ownerId === account.id;
+  const rateForm = `<form method="post" action="${BASE}/ratemyride/${r.id}/rate" class="ratef"><span class="muted">${mine ? `Your rating: ${stars(mine)}. Change it:` : 'Rate it:'}</span> ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<button class="secondary" type="submit" name="stars" value="${n}" title="${n} out of 10">${n}</button>`).join(' ')}</form>`;
   const form = !account
     ? `<p class="muted"><a href="${BASE}/login">Sign in</a> to rate it.</p>`
-    : own ? `<p class="muted">Your ride: others rate it.</p>
+    : own ? `${rateForm}
 <form method="post" action="${BASE}/ratemyride/${r.id}/remove" class="ratef" onsubmit="return confirm('Remove this ride, its photos and its ratings? This cannot be undone.')"><button class="secondary danger" type="submit">Remove this ride</button><span class="muted">It goes from the website and from the game's Rate My Ride.</span></form>`
-    : `<form method="post" action="${BASE}/ratemyride/${r.id}/rate" class="ratef"><span class="muted">${mine ? `Your rating: ${stars(mine)}. Change it:` : 'Rate it:'}</span> ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<button class="secondary" type="submit" name="stars" value="${n}" title="${n} out of 10">${n}</button>`).join(' ')}</form>`;
+    : rateForm;
   return layout(req, r.name, `
 <div class="grid">
 <div class="card">${photo}</div>
@@ -1172,7 +1173,6 @@ async function handleSite(req, res, parts, method, ip) {
       if (!account) return redirect(res, `${BASE}/login`);
       if (!sameOrigin(req)) return send(res, 403, errorPage(req, 403, 'The form came from somewhere else.', account), 'text/html; charset=utf-8');
       const form = await readForm(req);
-      if (r.ownerId === account.id) return send(res, 200, ridePage(req, account, r, 'That is your own ride.'), 'text/html; charset=utf-8');
       if (!rateRide(r, account, form.stars)) return send(res, 400, errorPage(req, 400, 'A rating is 1 to 10.', account), 'text/html; charset=utf-8');
       log(`Rate My Ride: ${account.gamertag} rated "${r.name}" ${Math.round(Number(form.stars))} on the website`);
       return redirect(res, `${BASE}/ratemyride/${r.id}`);
@@ -1433,7 +1433,6 @@ async function handleApi(req, res, parts, method, ip) {
       return send(res, 200, { ok: true, ride: rideJson(req, r, account) });
     }
     if (parts.length === 3 && parts[2] === 'rate' && method === 'POST') {
-      if (r.ownerId === account.id) return send(res, 400, { error: 'your own ride' });
       if (!rateRide(r, account, body.stars)) return send(res, 400, { error: 'stars is 1 to 10' });
       log(`Rate My Ride: ${account.gamertag} rated "${r.name}" ${Math.round(Number(body.stars))}`);
       return send(res, 200, { ok: true, rating: rideRating(r), ratings: r.ratingCount, ride: rideJson(req, r, account) });
