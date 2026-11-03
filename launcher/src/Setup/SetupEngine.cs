@@ -572,6 +572,16 @@ sealed class SetupEngine
 
         if (Directory.Exists(layout.Repo))
         {
+            // Never over someone's work: a working copy (on a branch, with worktrees, unpushed commits or a stash)
+            // stops the setup before anything in the folder is touched.
+            var work = await LocalWork.FindAsync(gitExe, git, layout.Repo, ct);
+            if (work.Count > 0)
+            {
+                Log(StepId.Source, $"not removing {layout.Repo}: {string.Join("; ", work)}");
+                throw new SetupException(
+                    $"{layout.Repo} is a working copy with work that is in no release: {string.Join("; ", work)}. Setting up {release.Tag} here would delete it, so the setup stopped and changed nothing in it. Go back and choose another folder for the game, or move that folder somewhere else first.",
+                    string.Join("\n", work));
+            }
             // The player's settings in it are put aside first and come back after the build (RestoreSettings).
             KeepSettings();
             // An unfinished or older checkout: removed, after the game in it is put aside (it is the player's 6 GB).

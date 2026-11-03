@@ -97,6 +97,7 @@ static partial class Program
                 case "remaining": RemainingChecks(args[1]); break;
                 case "cleanup2": CleanupChecks(args[1]); break;
                 case "app-control": AppControlChecks(args[1]); break;
+                case "localwork": await LocalWorkChecks(args[1]); break;
                 default: Console.WriteLine($"unknown command {args[0]}"); return 2;
             }
         }
