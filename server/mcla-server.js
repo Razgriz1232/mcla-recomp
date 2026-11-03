@@ -1381,9 +1381,11 @@ async function handleApi(req, res, parts, method, ip) {
   if (parts[0] === 'rides') {
     if (parts.length === 1 && method === 'GET') {
       const q = new URL(req.url, 'http://localhost').searchParams;
-      const { total, rides: list } = listRides(q.get('by') || 'rank', q.get('gamer') || '', q.get('from'), q.get('count'), q.get('xuid'), q.get('exclude'));
+      const { total, rides: list, ownFallback } = listRides(q.get('by') || 'rank', q.get('gamer') || '', q.get('from'), q.get('count'), q.get('xuid'), q.get('exclude'));
       const ranks = rideRanks();
-      return send(res, 200, { total, rides: list.map((r) => rideJson(req, r, account, ranks)) });
+      const out = list.map((r) => rideJson(req, r, account, ranks));
+      if (ownFallback) for (const j of out) j.ownerXuid = standInXuid(j.ownerXuid);
+      return send(res, 200, { total, rides: out });
     }
     if (parts.length === 1 && method === 'POST') {
       if (rateLimited(ip, 'ride', 10, 60000)) return send(res, 429, { error: 'too many uploads; wait a minute' });
@@ -1581,9 +1583,11 @@ function listRides(by, gamer, from, count, xuid, exclude) {
   // ride, the pick falls back to the player's own: the game takes an empty pick for a server that is
   // not available, so Rate Rides would never open while the player is the only one with a ride.
   const ex = normId(exclude);
+  let ownFallback = false;
   if (ex) {
     const others = all.filter((r) => r.ownerXuid !== ex);
     if (others.length || by !== 'random') all = others;
+    else ownFallback = all.length > 0;
   }
   if (by === 'random') {
     for (let i = all.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [all[i], all[j]] = [all[j], all[i]]; }
@@ -1594,7 +1598,14 @@ function listRides(by, gamer, from, count, xuid, exclude) {
   }
   const start = Math.max(0, Number(from) || 0);
   const n = count === null || count === undefined || count === '' ? 20 : Math.min(100, Math.max(0, Number(count) || 0));
-  return { total: all.length, rides: all.slice(start, start + n) };
+  return { total: all.length, rides: all.slice(start, start + n), ownFallback };
+}
+// The owner XUID a fallback ride is shown under: never the player's own. The game takes a
+// ride whose owner is the player for the one it has cached and shows it without downloading
+// it, and coming back from rating that ride then never finishes loading; under another
+// owner it is downloaded and shown like anyone's, which returns to the menu.
+function standInXuid(xuid) {
+  return 'FFFF' + String(xuid || '').slice(4).padStart(12, '0');
 }
 // A ride as it is uploaded: {name, vehicle, price, data: base64, photo: base64, photo2: base64,
 // userData: base64 (the game's 64 bytes), category (0 to 63)}; or the error when it is not one.
