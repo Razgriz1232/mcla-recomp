@@ -24,6 +24,11 @@
 // 1 and 2) and the game's own 64 bytes of "user data" (the vehicle type,
 // the price, how many times it was bought, the money earned), which travel
 // unchanged. A file id is ride * 4 + 1 + file.
+//
+// The photos are the game's own JPEGs of the garage scene, which its photo
+// album takes from the frame it last presented; the GPU layer keeps that frame
+// on the GPU, so the album's update is hooked here too (the last section) to
+// have it read back into the guest's memory while a photo is being taken.
 
 #include <algorithm>
 #include <cctype>
@@ -34,8 +39,10 @@
 #include <string>
 #include <vector>
 
+#include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/logging.h>
+#include <rex/system/kernel_state.h>
 
 #include "online.h"
 #include "online_client.h"
@@ -46,6 +53,15 @@
 // text manager.
 REX_EXTERN(sub_82396F58);
 REX_EXTERN(sub_822183A8);
+// The photo album's update, wrapped (the last section).
+REX_EXTERN(__imp__sub_8263CB78);
+
+REXCVAR_DEFINE_BOOL(mcla_snapshot_readback, true, "MCLA",
+                    "The photos the game takes (Rate My Ride's, which the upload sends to the "
+                    "online server): while one is taken, the frame it is taken from is read back "
+                    "from the GPU into the game's memory, where the game's own code copies and "
+                    "encodes it (the SDK's readback_resolve_rules, for those few frames only). "
+                    "Off, the photos come out black, as before");
 
 namespace mcla::online {
 
@@ -118,9 +134,14 @@ struct UploadRecord {
 };
 static_assert(sizeof(UploadRecord) == kRecordSize);
 
+// A guest address in the host's memory, as the recompiled code reaches it:
+// the SDK maps its heap at 0xE0000000 and up 4 KB further on than base +
+// address (on Windows; the heap's host address offset), and the game's photo
+// buffers are there. (base is the same memory's start; kept for the callers.)
 template <typename T>
 T* Guest(uint8_t* base, uint32_t addr) {
-  return addr ? reinterpret_cast<T*>(base + addr) : nullptr;
+  (void)base;
+  return addr ? rex::system::kernel_state()->memory()->TranslateVirtual<T*>(addr) : nullptr;
 }
 
 // A guest pointer that can be read: not null (the game's buffers sit anywhere
@@ -830,6 +851,155 @@ extern "C" REX_FUNC(sub_824F7638) {
   }
   ONLINE_LOG("Rate My Ride: the user data of ride {} replaced ({})", id, Plural(n, "byte"));
   Finish(status, kResultOk);
+}
+
+// --- The photos ---------------------------------------------------------------
+// The game's photo album (the object at *(0x8286D80C): its 1280x720 snapshot
+// texture's pixels at +1144, its JPEG buffers at +1152 and +1148, which the
+// upload sends as photos 1 and 2) takes a photo in its update, called each
+// frame through the vtable of its part at +456 (sub_8263CB78, r3 = that part):
+// SNAP PHOTO puts the part's state (+132) at 6, in which it counts four frames
+// drawn with the UI hidden; then state 3 with the step (+136) at 9 grabs the
+// picture (sub_8263C638 -> sub_82178B20: it waits for the GPU and copies, on
+// the CPU, the surface the last frame was presented from, one of the two at
+// 0x828393AC that the swap alternates, into the snapshot texture, setting its
+// alpha); step 12 encodes it with the game's libjpeg (sub_8263C728) and step
+// 10 keeps it under the size the upload allows.
+//
+// The SDK keeps a resolve's result on the GPU unless readback_resolve or a rule
+// of readback_resolve_rules copies it into the guest's memory, so that copy
+// read zeros: the photo was a complete JPEG of a black frame (alpha 0xFF, no
+// colour, checked in the snapshot's pixels after a snap). While the album
+// waits and grabs, a rule for the two surfaces is added to the rules here
+// (each surface's base address and size from its texture fetch constant, at
+// +28), and the rules as they were are put back once the picture is taken:
+// those few frames wait for the GPU at their resolves, the others cost nothing.
+
+namespace {
+
+constexpr uint32_t kFrontBuffers = 0x828393AC;  // two D3D surface pointers
+constexpr uint32_t kFrontBufferCount = 2;
+constexpr uint32_t kSurfaceFetch = 28;          // the surface's 6-word texture fetch constant
+constexpr uint32_t kAlbumState = 132;           // of the album's part at +456
+constexpr uint32_t kAlbumStep = 136;
+constexpr uint32_t kStateHidingUi = 6;          // counting the frames drawn without the UI
+constexpr uint32_t kStateTaking = 3;
+constexpr uint32_t kStepGrab = 9;
+constexpr uint64_t kReadbackLimitMs = 5000;     // a photo takes a few frames
+constexpr const char* kRulesOption = "readback_resolve_rules";
+
+struct SnapshotReadback {
+  bool armed = false;
+  bool gave_up = false;  // armed for too long: not again until the album stops taking
+  uint64_t since_ms = 0;
+  std::string before;  // the rules as they were
+  std::string with;    // the rules with the surfaces'
+};
+SnapshotReadback g_snapshot;  // the album's update runs on the game's main thread
+
+// The surfaces' memory as readback rules: "addr=LO-HI,src=0" each (colour
+// resolves that touch it). The fetch constant's second word holds the base
+// address in bits 12 to 31, the third the width and height less one (bits 0
+// to 12 and 13 to 25); the surface is tiled in 32x32 blocks of 4-byte pixels.
+// The base is the game's address in its physical heap (0xE7C47000 for the
+// first in a test); the rules take the physical address the resolves are
+// logged with, which the SDK's memory gives (0x07C48000 for that one: the heap
+// at 0xE0000000 is 4 KB further on).
+std::string FrontBufferRules(uint8_t* base) {
+  std::string rules;
+  auto* memory = rex::system::kernel_state()->memory();
+  for (uint32_t i = 0; i < kFrontBufferCount; ++i) {
+    const uint32_t surface = *Guest<be<uint32_t>>(base, kFrontBuffers + i * 4);
+    if (!GuestOk(surface)) {
+      continue;
+    }
+    const auto* fetch = Guest<be<uint32_t>>(base, surface + kSurfaceFetch);
+    const uint32_t guest_address = uint32_t(fetch[1]) & 0xFFFFF000u;
+    const uint32_t size_word = fetch[2];
+    uint32_t width = (size_word & 0x1FFF) + 1;
+    uint32_t height = ((size_word >> 13) & 0x1FFF) + 1;
+    if (width < 64 || width > 4096 || height < 64 || height > 4096) {
+      width = 1280;
+      height = 720;
+    }
+    if (!guest_address) {
+      continue;
+    }
+    const uint32_t address = guest_address < 0x20000000u
+                                 ? guest_address
+                                 : memory->GetPhysicalAddress(guest_address);
+    if (address == UINT32_MAX) {
+      continue;
+    }
+    const uint32_t bytes = ((width + 31) & ~31u) * ((height + 31) & ~31u) * 4;
+    if (!rules.empty()) {
+      rules += ';';
+    }
+    rules += fmt::format("addr=0x{:08X}-0x{:08X},src=0", address, address + bytes - 1);
+  }
+  return rules;
+}
+
+void ArmSnapshotReadback(uint8_t* base) {
+  const std::string ours = FrontBufferRules(base);
+  if (ours.empty()) {
+    ONLINE_WARN("photo: the presented frame's surfaces were not found; the photo will be black");
+    g_snapshot.gave_up = true;
+    return;
+  }
+  g_snapshot.before = rex::cvar::GetFlagByName(kRulesOption);
+  g_snapshot.with = g_snapshot.before.empty() ? ours : g_snapshot.before + ";" + ours;
+  if (!rex::cvar::SetFlagByName(kRulesOption, g_snapshot.with)) {
+    ONLINE_WARN("photo: {} not taken (this SDK has no such option); the photo will be black",
+                kRulesOption);
+    g_snapshot.gave_up = true;
+    return;
+  }
+  g_snapshot.armed = true;
+  g_snapshot.since_ms = NowMs();
+  ONLINE_LOG("photo: reading back the presented frame while the photo is taken ({})", ours);
+}
+
+void DisarmSnapshotReadback(const char* why) {
+  if (!g_snapshot.armed) {
+    return;
+  }
+  g_snapshot.armed = false;
+  // Put back what was there, unless the rules were changed meanwhile (the
+  // console, the dev pad): those stay.
+  if (rex::cvar::GetFlagByName(kRulesOption) == g_snapshot.with) {
+    rex::cvar::SetFlagByName(kRulesOption, g_snapshot.before);
+  }
+  ONLINE_LOG("photo: readback off after {} ms ({})", NowMs() - g_snapshot.since_ms, why);
+}
+
+}  // namespace
+
+// The photo album's update (r3 = its part at +456).
+extern "C" REX_FUNC(sub_8263CB78) {
+  const uint32_t part = ctx.r3.u32;
+  __imp__sub_8263CB78(ctx, base);
+  if (!GuestOk(part)) {
+    return;
+  }
+  const uint32_t state = *Guest<be<uint32_t>>(base, part + kAlbumState);
+  const uint32_t step = *Guest<be<uint32_t>>(base, part + kAlbumStep);
+  const bool taking = state == kStateHidingUi || (state == kStateTaking && step == kStepGrab);
+  if (!taking) {
+    g_snapshot.gave_up = false;
+    DisarmSnapshotReadback("the picture is taken");
+    return;
+  }
+  if (g_snapshot.armed) {
+    if (NowMs() - g_snapshot.since_ms > kReadbackLimitMs) {
+      g_snapshot.gave_up = true;
+      DisarmSnapshotReadback("the album is still waiting");
+    }
+    return;
+  }
+  if (!g_snapshot.gave_up && REXCVAR_GET(mcla_snapshot_readback)) {
+    ArmSnapshotReadback(base);
+  }
 }
 
 }  // namespace mcla::online
