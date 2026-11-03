@@ -12,5 +12,7 @@
     "build": "echo \"nothing to build: plain Node.js\"",
     "start": "node mcla-server.js"
   },
-  "dependencies": {}
+  "dependencies": {
+    "mysql2": "^3.11.0"
+  }
 }

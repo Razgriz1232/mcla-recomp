@@ -32,7 +32,7 @@ There is no relay through the server and no NAT traversal yet; a host who cannot
 
 ## Running the server
 
-One Node.js app, no packages, made for shared hosting (GoDaddy's Node.js apps and other cPanel hosts) as well as a PC: [server/README.md](../server/README.md) has the steps for both, the options and the API.
+One Node.js app (one package, `mysql2`, and only when a MySQL database holds the data), made for shared hosting (GoDaddy's Node.js apps and other cPanel hosts) as well as a PC: [server/README.md](../server/README.md) has the steps for both, the options and the API.
 
 ## What works and what does not
 

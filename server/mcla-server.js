@@ -10,7 +10,10 @@
 //   node mcla-server.js [--port 36000] [--bind 0.0.0.0] [--data ./data]
 //                       [--base-path /mcla] [--patch-url URL] [--verbose]
 //
-// Plain Node.js (16 or newer), no packages. Made to run on hosting that
+// Plain Node.js (16 or newer); the one package, mysql2, is loaded only when
+// a MySQL database is configured (MCLA_DB_URL), and then the accounts, the
+// state, the rides and their files live there instead of the data folder, so
+// an update that replaces the app's folder loses nothing. Made to run on hosting that
 // manages one Node.js app (cPanel / Phusion Passenger, as GoDaddy's does, or a
 // platform that runs "npm start"): it listens on PORT when the host sets it,
 // on every interface, trusts X-Forwarded-For from the host's proxy, serves
@@ -96,13 +99,40 @@ function trace(...parts) {
 
 // --- JSON files: what survives restarts and is shared between copies of the app ----
 
+// --- Where the data lives -----------------------------------------------------------
+//
+// Each store is one JSON document (the accounts, the live state, the secret,
+// the rides). By default it is a file in the data folder, written atomically
+// and re-read before each request when another copy of the app changed it.
+// With a MySQL database configured (MCLA_DB_URL, or MCLA_DB_HOST and the
+// others), the documents live in its `mcla_store` table and the rides' car
+// data and photos in `mcla_files`, so nothing is lost when the app's folder
+// is replaced at an update. The tables are made at the first start, and a
+// store with no row yet is filled from its JSON file when one is there, so
+// the switch from files keeps the accounts.
+const DB_URL = process.env.MCLA_DB_URL || argValue('--db', '');
+const DB_HOST = process.env.MCLA_DB_HOST || '';
+const DB_CONFIGURED = !!(DB_URL || DB_HOST);
+let db = null;  // the mysql2 pool once connected
+
+function newVersion() {
+  return crypto.randomBytes(8).toString('hex');
+}
+
+const STORES = [];
+
 class JsonStore {
   constructor(name, initial) {
+    this.name = name.replace(/\.json$/, '');
     this.file = path.join(DATA_DIR, name);
     this.data = initial;
     this.mtime = 0;
     this.size = -1;
+    this.version = '';      // the database row's version this copy has
+    this.pending = Promise.resolve();
+    this.dirty = false;     // changed before the database was ready
     this.load();
+    STORES.push(this);
   }
   load() {
     try {
@@ -115,11 +145,30 @@ class JsonStore {
       if (e.code !== 'ENOENT') log(`${path.basename(this.file)}: not read (${e.message}); starting from what is in memory`);
     }
   }
-  // Picks up what another copy of the app wrote.
+  // Picks up what another copy of the app wrote (files: by the file's time and size).
   refresh() {
-    this.load();
+    if (!DB_CONFIGURED) this.load();
+  }
+  // The same, from the database: only a changed row is fetched.
+  async refreshDb() {
+    if (!db) return;
+    const [rows] = await db.query('SELECT version, data FROM mcla_store WHERE name = ? AND version <> ?', [this.name, this.version]);
+    if (rows.length) {
+      this.data = JSON.parse(rows[0].data);
+      this.version = rows[0].version;
+    }
   }
   save() {
+    if (DB_CONFIGURED) {
+      this.version = newVersion();
+      const text = JSON.stringify(this.data);
+      if (!db) { this.dirty = true; return; }
+      const version = this.version;
+      this.pending = this.pending
+        .then(() => db.query('INSERT INTO mcla_store (name, version, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE version = VALUES(version), data = VALUES(data)', [this.name, version, text]))
+        .catch((e) => log(`${this.name}: not saved to the database (${e.message})`));
+      return;
+    }
     fs.mkdirSync(DATA_DIR, { recursive: true });
     const tmp = `${this.file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(this.data, null, 1));
@@ -128,6 +177,96 @@ class JsonStore {
     this.mtime = st.mtimeMs;
     this.size = st.size;
   }
+  // At start, with the database ready: its row wins; without one, what is in
+  // memory (the JSON file, or the defaults) becomes the row.
+  async attachDb() {
+    const [rows] = await db.query('SELECT version, data FROM mcla_store WHERE name = ?', [this.name]);
+    if (rows.length) {
+      this.data = JSON.parse(rows[0].data);
+      this.version = rows[0].version;
+      this.dirty = false;
+      return false;
+    }
+    this.version = newVersion();
+    await db.query('INSERT INTO mcla_store (name, version, data) VALUES (?, ?, ?)', [this.name, this.version, JSON.stringify(this.data)]);
+    this.dirty = false;
+    return true;
+  }
+  // Waits for the writes queued so far (tests and a clean stop).
+  flush() {
+    return this.pending;
+  }
+}
+
+// Binary files (the rides' car data and photos): the data folder, or `mcla_files`.
+async function putFile(name, buffer, type) {
+  if (db) {
+    await db.query('INSERT INTO mcla_files (name, type, size, modified, data) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE type = VALUES(type), size = VALUES(size), modified = VALUES(modified), data = VALUES(data)',
+      [name, type, buffer.length, Date.now(), buffer]);
+    return;
+  }
+  const file = path.join(DATA_DIR, name);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, buffer);
+}
+async function getFile(name) {
+  if (db) {
+    const [rows] = await db.query('SELECT type, size, modified, data FROM mcla_files WHERE name = ?', [name]);
+    return rows.length ? { type: rows[0].type, size: rows[0].size, modified: Number(rows[0].modified), data: rows[0].data } : null;
+  }
+  const file = path.join(DATA_DIR, name);
+  try {
+    const st = fs.statSync(file);
+    return { type: '', size: st.size, modified: Math.floor(st.mtimeMs), data: fs.readFileSync(file) };
+  } catch (_) { return null; }
+}
+async function deleteFile(name) {
+  if (db) { await db.query('DELETE FROM mcla_files WHERE name = ?', [name]); return; }
+  try { fs.unlinkSync(path.join(DATA_DIR, name)); } catch (_) { /* gone */ }
+}
+
+// Connects, makes the tables, loads the stores (importing the JSON files when
+// the tables are new), then the server can listen.
+async function initStorage() {
+  if (!DB_CONFIGURED) return;
+  let mysql;
+  try {
+    mysql = require('mysql2/promise');
+  } catch (_) {
+    throw new Error('a MySQL database is configured but the mysql2 package is not installed: run "npm install" in the app folder (cPanel: Run NPM Install) and start again');
+  }
+  const settings = DB_URL
+    ? { uri: DB_URL }
+    : { host: DB_HOST, port: Number(process.env.MCLA_DB_PORT) || 3306, user: process.env.MCLA_DB_USER || '', password: process.env.MCLA_DB_PASSWORD || '', database: process.env.MCLA_DB_NAME || '' };
+  db = mysql.createPool({ ...settings, waitForConnections: true, connectionLimit: 4, charset: 'utf8mb4', supportBigNumbers: true });
+  await db.query('CREATE TABLE IF NOT EXISTS mcla_store (name VARCHAR(32) NOT NULL PRIMARY KEY, version CHAR(16) NOT NULL, data LONGTEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) CHARACTER SET utf8mb4');
+  await db.query('CREATE TABLE IF NOT EXISTS mcla_files (name VARCHAR(190) NOT NULL PRIMARY KEY, type VARCHAR(80) NOT NULL, size INT NOT NULL, modified BIGINT NOT NULL, data LONGBLOB NOT NULL) CHARACTER SET utf8mb4');
+  for (const store of STORES) {
+    const changed = store.dirty;
+    const imported = await store.attachDb();
+    if (imported) {
+      const what = store.name === 'accounts' ? `${store.data.accounts.length} account(s)` : store.name === 'rides' ? `${store.data.rides.length} ride(s)` : store.name;
+      log(`database: ${store.name} row made from ${fs.existsSync(store.file) ? path.basename(store.file) : 'the defaults'} (${what})`);
+    } else if (changed) {
+      log(`database: ${store.name} row found; what this copy made before the connection is set aside`);
+    }
+  }
+  // Ride files on disk from the file days go in once, when the table has none.
+  const [[count]] = await db.query('SELECT COUNT(*) AS n FROM mcla_files');
+  const ridesDir = path.join(DATA_DIR, 'rides');
+  if (Number(count.n) === 0 && fs.existsSync(ridesDir)) {
+    let n = 0;
+    for (const f of fs.readdirSync(ridesDir)) {
+      const m = /^(\d+)\.(bin|photo)$/.exec(f);
+      if (!m) continue;
+      const buf = fs.readFileSync(path.join(ridesDir, f));
+      const ride = (STORES.find((s) => s.name === 'rides') || { data: { rides: [] } }).data.rides.find((r) => r.id === Number(m[1]));
+      await putFile(`rides/${f}`, buf, m[2] === 'photo' ? (ride && ride.photo) || 'image/jpeg' : 'application/octet-stream');
+      n++;
+    }
+    if (n) log(`database: ${n} ride file(s) imported from ${ridesDir}`);
+  }
+  log(`database: ${DB_URL ? DB_URL.replace(/\/\/([^:]*):[^@]*@/, '//$1:***@') : DB_HOST} (mcla_store, mcla_files)`);
 }
 
 const accounts = new JsonStore('accounts.json', { nextId: 1, accounts: [] });
@@ -140,7 +279,11 @@ if (process.env.MCLA_COOKIE_SECRET) {
   secrets.save();
 }
 
-function refreshAll() {
+async function refreshAll() {
+  if (db) {
+    await Promise.all([accounts, rides, state].map((s) => s.refreshDb()));
+    return;
+  }
   accounts.refresh();
   rides.refresh();
   state.refresh();
@@ -1206,9 +1349,8 @@ async function handleApi(req, res, parts, method, ip) {
         name, vehicle: String(body.vehicle || '').slice(0, 40), price: Math.max(0, Math.floor(Number(body.price) || 0)),
         size: data.length, photo: type, ratingSum: 0, ratingCount: 0, ratings: {}, uploaded: new Date().toISOString(),
       };
-      fs.mkdirSync(RIDES_DIR, { recursive: true });
-      fs.writeFileSync(path.join(RIDES_DIR, `${r.id}.bin`), data);
-      if (photo) fs.writeFileSync(path.join(RIDES_DIR, `${r.id}.photo`), photo);
+      await putFile(`rides/${r.id}.bin`, data, 'application/octet-stream');
+      if (photo) await putFile(`rides/${r.id}.photo`, photo, type);
       rides.data.rides.push(r);
       rides.save();
       log(`Rate My Ride: ${account.gamertag} uploaded "${name}" (${data.length} bytes${photo ? ', a photo' : ''})`);
@@ -1221,16 +1363,16 @@ async function handleApi(req, res, parts, method, ip) {
       if (r.ownerId !== account.id) return send(res, 403, { error: 'not your ride' });
       rides.data.rides = rides.data.rides.filter((x) => x.id !== r.id);
       rides.save();
-      for (const ext of ['bin', 'photo']) { try { fs.unlinkSync(path.join(RIDES_DIR, `${r.id}.${ext}`)); } catch (_) { /* gone */ } }
+      await deleteFile(`rides/${r.id}.bin`);
+      await deleteFile(`rides/${r.id}.photo`);
       log(`Rate My Ride: ${account.gamertag} deleted "${r.name}"`);
       return send(res, 200, { ok: true });
     }
     if (parts.length === 3 && parts[2] === 'file' && method === 'GET') {
-      const file = path.join(RIDES_DIR, `${r.id}.bin`);
-      let st;
-      try { st = fs.statSync(file); } catch (_) { return send(res, 404, { error: 'no file' }); }
-      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': st.size, 'Cache-Control': 'no-cache' });
-      return fs.createReadStream(file).pipe(res);
+      const f = await getFile(`rides/${r.id}.bin`);
+      if (!f) return send(res, 404, { error: 'no file' });
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': f.data.length, 'Cache-Control': 'no-cache' });
+      return res.end(f.data);
     }
     if (parts.length === 3 && parts[2] === 'rate' && method === 'POST') {
       if (r.ownerId === account.id) return send(res, 400, { error: 'your own ride' });
@@ -1336,7 +1478,6 @@ function sendStorageFile(req, res, name) {
 // this server, reachable from the game (the routes under /rides) and shown on
 // the website (/ratemyride), where signed-in players rate rides too.
 const rides = new JsonStore('rides.json', { nextId: 1, rides: [] });
-const RIDES_DIR = path.join(DATA_DIR, 'rides');
 const RIDE_NAME = /^[A-Za-z0-9][A-Za-z0-9 .,'!_-]{0,39}$/;
 const RIDE_FILE_MAX = 2 * 1024 * 1024;
 const RIDE_PHOTO_MAX = 1024 * 1024;
@@ -1392,14 +1533,13 @@ function photoType(buf) {
   if (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
   return null;
 }
-function sendRidePhoto(res, id) {
+async function sendRidePhoto(res, id) {
   const r = rideById(id);
   if (!r || !r.photo) return send(res, 404, { error: 'no photo' });
-  const file = path.join(RIDES_DIR, `${r.id}.photo`);
-  let st;
-  try { st = fs.statSync(file); } catch (_) { return send(res, 404, { error: 'no photo' }); }
-  res.writeHead(200, { 'Content-Type': r.photo, 'Content-Length': st.size, 'Cache-Control': 'public, max-age=3600' });
-  fs.createReadStream(file).pipe(res);
+  const f = await getFile(`rides/${r.id}.photo`);
+  if (!f) return send(res, 404, { error: 'no photo' });
+  res.writeHead(200, { 'Content-Type': r.photo, 'Content-Length': f.data.length, 'Cache-Control': 'public, max-age=3600' });
+  res.end(f.data);
 }
 function stars(n) {
   const full = Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
@@ -1421,7 +1561,7 @@ function sendAsset(req, res, name) {
 }
 
 async function handle(req, res) {
-  refreshAll();
+  await refreshAll();
   if (expire()) state.save();
 
   let pathname = new URL(req.url, 'http://localhost').pathname;
@@ -1453,11 +1593,15 @@ server.on('error', (e) => {
   console.error(`cannot listen on ${BIND}:${PORT}: ${e.message}`);
   process.exit(1);
 });
-server.listen(PORT, BIND, () => {
+initStorage().then(() => server.listen(PORT, BIND, () => {
   log(`${SITE_NAME}: listening on ${BIND}:${PORT}${BASE ? ` under ${BASE}` : ''}${TRUST_PROXY ? ', behind a proxy' : ''}`);
-  log(`data in ${DATA_DIR}: ${accounts.data.accounts.length} account(s)`);
+  log(`${db ? 'database' : `data in ${DATA_DIR}`}: ${accounts.data.accounts.length} account(s)`);
   try { fs.mkdirSync(STORAGE_DIR, { recursive: true }); } catch (_) { /* read-only: no title storage */ }
   log(`title storage in ${STORAGE_DIR}: ${storageFiles('*').length} file(s)`);
   log(`Rate My Ride: ${rides.data.rides.length} ride(s)`);
   if (!HOSTED) log(`the website is at http://localhost:${PORT}${BASE}/`);
+})).catch((e) => {
+  console.error(`storage: ${e.message}`);
+  log(`storage: ${e.message}`);
+  process.exit(1);
 });
