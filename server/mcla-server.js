@@ -910,7 +910,7 @@ button.secondary,.pill-button.ghost{background:rgba(255,255,255,.08);color:#fff;
 .racers{display:flex;flex-wrap:wrap;gap:8px}
 .lvl{display:inline-flex;align-items:center;gap:12px;margin-top:16px;padding:6px 14px 6px 6px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid var(--line)}.lvl b{display:inline-flex;align-items:center;height:30px;padding:0 12px;border-radius:999px;background:var(--yellow);color:#111;font-weight:700;font-size:13px;letter-spacing:.06em}.lvl span{font-size:14px;font-weight:300;color:rgba(255,255,255,.8)}
 .lvl.big{margin:0}.progress{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin:4px 0 20px}.progress .xp{flex:1;min-width:220px}.xpbar{height:8px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}.xpbar div{height:100%;background:var(--yellow);border-radius:999px}.xptext{font-size:13px;font-weight:300;color:var(--muted);margin-top:8px}
-b.gold{color:var(--yellow)}table.lb td:first-child{width:36px}.pill i{font-style:normal;opacity:.6;margin-left:4px}
+b.gold{color:var(--yellow)}button.danger{border-color:rgba(255,107,122,.5);color:var(--bad)}button.danger:hover{background:rgba(255,107,122,.12)}table.lb td:first-child{width:36px}.pill i{font-style:normal;opacity:.6;margin-left:4px}
 .rides{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;margin-top:18px}.ride{display:block;color:var(--text);text-decoration:none;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:12px;overflow:hidden;transition:transform .15s,border-color .15s}.ride:hover{transform:translateY(-2px);border-color:rgba(255,255,255,.25)}.ride img,.nophoto{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:#0b0b0e}.nophoto{display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:13px;letter-spacing:.08em;text-transform:uppercase}.nophoto.big{aspect-ratio:4/3;border-radius:10px}.ridebody{display:flex;flex-direction:column;gap:3px;padding:12px 14px 14px;font-size:14px}.ridebody b{font-weight:600;font-size:15px}.stars{color:var(--yellow);letter-spacing:.06em}.stars small{color:var(--muted);letter-spacing:0;margin-left:4px}.bigphoto{display:block;width:100%;border-radius:10px;background:#0b0b0e}.ratef{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:16px}.ratef button{padding:8px 12px;letter-spacing:.06em}#rmr{grid-column:1/-1}
 footer{text-align:center;color:rgba(255,255,255,.45);font-size:12.5px;padding:22px 16px 28px;font-weight:300}footer a{color:rgba(255,255,255,.7)}
 @media (min-width:1500px){.topnav{padding:34px 72px 8px}main{padding:10px 72px 48px}.hero{margin:0 -72px;padding:0 72px}.hero .place,.hero .bottomleft{left:72px}.hero .track,.hero .points{right:72px}.hero .place{top:130px}.hero .track{top:140px}}
@@ -1121,7 +1121,8 @@ function ridePage(req, account, r, notice) {
   const own = account && r.ownerId === account.id;
   const form = !account
     ? `<p class="muted"><a href="${BASE}/login">Sign in</a> to rate it.</p>`
-    : own ? '<p class="muted">Your ride: others rate it.</p>'
+    : own ? `<p class="muted">Your ride: others rate it.</p>
+<form method="post" action="${BASE}/ratemyride/${r.id}/remove" class="ratef" onsubmit="return confirm('Remove this ride, its photos and its ratings? This cannot be undone.')"><button class="secondary danger" type="submit">Remove this ride</button><span class="muted">It goes from the website and from the game's Rate My Ride.</span></form>`
     : `<form method="post" action="${BASE}/ratemyride/${r.id}/rate" class="ratef"><span class="muted">${mine ? `Your rating: ${stars(mine)}. Change it:` : 'Rate it:'}</span> ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<button class="secondary" type="submit" name="stars" value="${n}" title="${n} out of 10">${n}</button>`).join(' ')}</form>`;
   return layout(req, r.name, `
 <div class="grid">
@@ -1175,6 +1176,14 @@ async function handleSite(req, res, parts, method, ip) {
       if (!rateRide(r, account, form.stars)) return send(res, 400, errorPage(req, 400, 'A rating is 1 to 10.', account), 'text/html; charset=utf-8');
       log(`Rate My Ride: ${account.gamertag} rated "${r.name}" ${Math.round(Number(form.stars))} on the website`);
       return redirect(res, `${BASE}/ratemyride/${r.id}`);
+    }
+    if (parts.length === 3 && parts[2] === 'remove' && method === 'POST') {
+      if (!account) return redirect(res, `${BASE}/login`);
+      if (!sameOrigin(req)) return send(res, 403, errorPage(req, 403, 'The form came from somewhere else.', account), 'text/html; charset=utf-8');
+      if (r.ownerId !== account.id) return send(res, 403, errorPage(req, 403, 'Only its owner can remove a ride.', account), 'text/html; charset=utf-8');
+      await removeRide(r);
+      log(`Rate My Ride: ${account.gamertag} removed "${r.name}" on the website`);
+      return redirect(res, `${BASE}/account`);
     }
   }
   if (first === 'register') {
@@ -1404,9 +1413,7 @@ async function handleApi(req, res, parts, method, ip) {
     }
     if (parts.length === 2 && method === 'DELETE') {
       if (r.ownerId !== account.id) return send(res, 403, { error: 'not your ride' });
-      rides.data.rides = rides.data.rides.filter((x) => x.id !== r.id);
-      rides.save();
-      for (const ext of ['bin', 'photo', 'photo2']) await deleteFile(`rides/${r.id}.${ext}`);
+      await removeRide(r);
       log(`Rate My Ride: ${account.gamertag} deleted "${r.name}"`);
       return send(res, 200, { ok: true });
     }
@@ -1650,6 +1657,12 @@ async function sendRidePhoto(res, id, which) {
   res.end(f.data);
 }
 // A rating out of 10 as ten stars.
+// Removes a ride, its files and its ratings.
+async function removeRide(r) {
+  rides.data.rides = rides.data.rides.filter((x) => x.id !== r.id);
+  rides.save();
+  for (const ext of ['bin', 'photo', 'photo2']) await deleteFile(`rides/${r.id}.${ext}`);
+}
 function stars(n) {
   const full = Math.max(0, Math.min(10, Math.round(Number(n) || 0)));
   return '★'.repeat(full) + '☆'.repeat(10 - full);
