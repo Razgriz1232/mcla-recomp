@@ -1384,7 +1384,7 @@ async function handleApi(req, res, parts, method, ip) {
       const { total, rides: list, ownFallback } = listRides(q.get('by') || 'rank', q.get('gamer') || '', q.get('from'), q.get('count'), q.get('xuid'), q.get('exclude'));
       const ranks = rideRanks();
       const out = list.map((r) => rideJson(req, r, account, ranks));
-      if (ownFallback) for (const j of out) j.ownerXuid = standInXuid(j.ownerXuid);
+      if (ownFallback) for (const j of out) { j.ownerXuid = standInXuid(j.ownerXuid); j.userData = notForSale(j.userData); }
       return send(res, 200, { total, rides: out });
     }
     if (parts.length === 1 && method === 'POST') {
@@ -1606,6 +1606,15 @@ function listRides(by, gamer, from, count, xuid, exclude) {
 // owner it is downloaded and shown like anyone's, which returns to the menu.
 function standInXuid(xuid) {
   return 'FFFF' + String(xuid || '').slice(4).padStart(12, '0');
+}
+// The game's 64 bytes of a fallback ride with its "for sale" word (offset 16) cleared: the game
+// then refuses to buy it ("not for purchase"). Bought under the stand-in owner, the purchase
+// would look the seller up by that XUID, find nobody, and stay on PURCHASING.
+function notForSale(userData) {
+  if (!userData) return userData;
+  const b = Buffer.from(String(userData), 'base64');
+  if (b.length >= 20) b.writeUInt32BE(0, 16);
+  return b.toString('base64');
 }
 // A ride as it is uploaded: {name, vehicle, price, data: base64, photo: base64, photo2: base64,
 // userData: base64 (the game's 64 bytes), category (0 to 63)}; or the error when it is not one.
