@@ -79,6 +79,7 @@ set(MCLA_SOURCES
     src/online/online_user.cpp
     src/online/online_xgi.cpp
     src/online/online_storage.cpp
+    src/online/online_rmr.cpp
 )
 
 if(WIN32)

@@ -17,12 +17,14 @@ void ServerApi::Configure(const HttpUrl& url, const std::string& key) {
 }
 
 int ServerApi::Call(const char* method, const std::string& path, const Json* body, Json* reply,
-                    uint32_t timeout_ms) {
+                    uint32_t timeout_ms, bool trace_body) {
   if (url_.host.empty()) {
     return 0;
   }
   const std::string body_text = body ? body->dump() : std::string();
-  ONLINE_TRACE("{} {}{}", method, path, body ? " " + body_text : "");
+  ONLINE_TRACE("{} {}{}", method, path,
+               body ? (trace_body ? " " + body_text : " (" + std::to_string(body_text.size()) + " bytes)")
+                    : "");
   std::vector<std::string> headers;
   if (!key_.empty()) {
     headers.push_back("Authorization: Bearer " + key_);
@@ -165,6 +167,56 @@ int ServerApi::GetTitleStorage(const std::string& name, std::vector<uint8_t>* ou
     ONLINE_WARN("GET {}: HTTP {} {}", path, response.status, response.body.substr(0, 200));
   }
   return response.status;
+}
+
+// --- Rate My Ride ---------------------------------------------------------------
+
+int ServerApi::ListRides(const std::string& query, Json* out) {
+  return Call("GET", "/rides?" + query, nullptr, out, 8000);
+}
+
+int ServerApi::UploadRide(const Json& ride, Json* out) {
+  return Call("POST", "/rides", &ride, out, 30000, false);
+}
+
+int ServerApi::ReplaceRide(uint32_t id, const Json& ride, Json* out) {
+  return Call("POST", "/rides/" + std::to_string(id), &ride, out, 30000, false);
+}
+
+int ServerApi::DownloadRideFile(uint32_t id, uint32_t which, std::vector<uint8_t>* out) {
+  if (url_.host.empty()) {
+    return 0;
+  }
+  const std::string path = "/rides/" + std::to_string(id) +
+                           (which == 0 ? "/file" : which == 1 ? "/photo" : "/photo2");
+  std::vector<std::string> headers;
+  if (!key_.empty()) {
+    headers.push_back("Authorization: Bearer " + key_);
+  }
+  HttpResponse response = HttpRequest("GET", url_, path, "", headers, 15000);
+  if (response.status == 0) {
+    ONLINE_WARN("GET {}: {}", path, response.error);
+    return 0;
+  }
+  if (response.ok()) {
+    out->assign(response.body.begin(), response.body.end());
+    ONLINE_TRACE("GET {} -> {} ({} bytes)", path, response.status, response.body.size());
+  } else if (response.status != 404) {
+    ONLINE_WARN("GET {}: HTTP {} {}", path, response.status, response.body.substr(0, 200));
+  }
+  return response.status;
+}
+
+int ServerApi::RateRide(uint32_t id, uint32_t stars, Json* out) {
+  Json body = Json::Object();
+  body.set("stars", Json(stars));
+  return Call("POST", "/rides/" + std::to_string(id) + "/rate", &body, out);
+}
+
+int ServerApi::SetRideUserData(uint32_t id, const std::string& user_data_base64, Json* out) {
+  Json body = Json::Object();
+  body.set("userData", user_data_base64);
+  return Call("POST", "/rides/" + std::to_string(id) + "/userdata", &body, out);
 }
 
 }  // namespace mcla::online

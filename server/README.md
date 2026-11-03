@@ -81,10 +81,12 @@ JSON in and out. The game's routes need `Authorization: Bearer <game key>`; with
 | `GET /sessions/:id/qos` | key | | `{qos: base64}`. |
 | `GET /storage/title` | key | `?name=pattern` | The title storage files whose names match (a `*` is a wildcard): `{files:[{name, size, modified}]}`. |
 | `GET /storage/title/:name` | key | | One title storage file, as bytes (404 when there is none). |
-| `GET /rides` | key | `?by=rank|new|random|gamer&gamer=&from=&count=` | Rate My Ride: the rides in that order, `{total, rides:[{id, name, vehicle, owner, ownerXuid, price, rating, ratings, size, uploaded, photo, yours, yourRating}]}`. |
-| `POST /rides` | key | `{name, vehicle, price, data: base64, photo: base64}` | Uploads a ride: the car data (up to 2 MB) and a JPEG or PNG photo (up to 1 MB). Ten a minute per address. |
-| `GET /rides/:id` | key | | One ride. `GET /rides/:id/file` is its car data as bytes; `GET /rides/:id/photo` its photo (no key: the website shows it). |
-| `POST /rides/:id/rate` | key | `{stars: 1..5}` | Rates a ride (one rating per account, changed by rating again; not your own). |
+| `GET /rides` | key | `?by=rank|new|random|gamer&gamer=&xuid=&exclude=&from=&count=` | Rate My Ride: the rides in that order (`gamer`: one player's, by gamertag or by `xuid`; `exclude`: leaving one XUID's out; `count=0`: just the total), `{total, rides:[{id, name, vehicle, owner, ownerXuid, price, rating, ratings, rank, size, fileSizes, uploaded, photo, photo2, userData, category, yours, yourRating}]}`. |
+| `POST /rides` | key | `{name, vehicle, price, data: base64, photo: base64, photo2: base64, userData: base64, category}` | Uploads a ride: the car data (up to 2 MB), one or two JPEG or PNG photos (up to 1 MB each), the game's own 64 bytes about it (`userData`: its vehicle, price, times bought and money earned, kept as they are) and its category (0 to 63). Ten a minute per address. |
+| `POST /rides/:id` | key, owner | the same | Replaces a ride (the game's "change ride"): new files and data under the same id; its ratings start over. |
+| `GET /rides/:id` | key | | One ride. `GET /rides/:id/file` is its car data as bytes; `GET /rides/:id/photo` and `/photo2` its photos (no key: the website shows them). |
+| `POST /rides/:id/userdata` | key | `{userData: base64}` | Replaces the game's 64 bytes on any ride (buying a ride credits the seller's record this way). |
+| `POST /rides/:id/rate` | key | `{stars: 1..10}` | Rates a ride on the game's scale, 1 to 10 (one rating per account, changed by rating again; not your own). Answers `{rating, ratings, ride}`. |
 | `DELETE /rides/:id` | key, owner | | Removes a ride. |
 | `POST /stats` | key | `{sessionId, xuid, titleId, views:[{viewId, properties}]}` | A stats write for the player `xuid`, from them or from the host of `sessionId`. Pays the XP of a race finished and, when the win property says so, of a race won, once per player and session; answers `{awards, progress}`. The last 500 writes are kept and logged in full. |
 
@@ -96,7 +98,7 @@ Xbox LIVE kept, for each game, files its publisher put there (title-managed stor
 
 ## Rate My Ride
 
-The game's Rate My Ride menu (pause menu, Modes, Xbox Live) let players send a car with a photo to Rockstar's upload service, browse the rides others sent, rate them and buy them; the service is gone. This server has the same thing: rides are kept in `data/rides.json` with the car data and the photo as files in `data/rides`, the game's routes are under `/rides`, and the website shows them under `/ratemyride` (every ride with its photo, best rated or newest first, and a page per ride where signed-in players give 1 to 5 stars; the home page shows the three best, the account page the player's own). A rating is one per account per ride, changed by rating again; nobody rates their own.
+The game's Rate My Ride menu (pause menu, Modes, Xbox Live) let players send a car with its photos to Rockstar's upload service, browse the rides others sent, rate them and buy them; the service is gone. This server has the same thing, and the game's menu uses it (the online layer translates the menu's commands into these routes): rides are kept in `data/rides.json` with the car data and the photos as files in `data/rides`, the game's routes are under `/rides`, and the website shows them under `/ratemyride` (every ride with its photo, best rated or newest first, and a page per ride where signed-in players rate it 1 to 10, as the game does; the home page shows the three best, the account page the player's own). A rating is one per account per ride, changed by rating again; nobody rates their own.
 
 What the game does with it: nothing yet. The game's menu talks Rockstar's own protocol (the RAGE library's upload commands), and the online layer does not translate those into these routes yet; until it does, the menu says the server is not available. The routes are there for that translation, and for anything else that uploads a ride.
 

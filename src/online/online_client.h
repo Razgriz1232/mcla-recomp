@@ -51,11 +51,23 @@ class ServerApi {
   bool ListTitleStorage(const std::string& pattern, Json* out);
   int GetTitleStorage(const std::string& name, std::vector<uint8_t>* out, uint64_t* modified_ms);
 
+  // Rate My Ride (the routes under /rides, used by online_rmr.cpp). Each
+  // returns the HTTP status (0: the server was not reached). `query` is what
+  // follows "/rides?"; `which` names a ride's file: 0 the car data, 1 and 2
+  // the photos.
+  int ListRides(const std::string& query, Json* out);
+  int UploadRide(const Json& ride, Json* out);
+  int ReplaceRide(uint32_t id, const Json& ride, Json* out);
+  int DownloadRideFile(uint32_t id, uint32_t which, std::vector<uint8_t>* out);
+  int RateRide(uint32_t id, uint32_t stars, Json* out);
+  int SetRideUserData(uint32_t id, const std::string& user_data_base64, Json* out);
+
  private:
   // Returns the HTTP status (0 when the server was not reached); the body is
   // parsed into `reply` when it is JSON.
+  // `trace_body` false keeps a large body (a ride's files) out of the log.
   int Call(const char* method, const std::string& path, const Json* body, Json* reply,
-           uint32_t timeout_ms = 4000);
+           uint32_t timeout_ms = 4000, bool trace_body = true);
 
   HttpUrl url_;
   std::string key_;

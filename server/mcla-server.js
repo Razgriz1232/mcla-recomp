@@ -296,11 +296,11 @@ async function initStorage() {
   if (Number(count.n) === 0 && fs.existsSync(ridesDir)) {
     let n = 0;
     for (const f of fs.readdirSync(ridesDir)) {
-      const m = /^(\d+)\.(bin|photo)$/.exec(f);
+      const m = /^(\d+)\.(bin|photo|photo2)$/.exec(f);
       if (!m) continue;
       const buf = fs.readFileSync(path.join(ridesDir, f));
       const ride = (STORES.find((s) => s.name === 'rides') || { data: { rides: [] } }).data.rides.find((r) => r.id === Number(m[1]));
-      await putFile(`rides/${f}`, buf, m[2] === 'photo' ? (ride && ride.photo) || 'image/jpeg' : 'application/octet-stream');
+      await putFile(`rides/${f}`, buf, m[2] === 'bin' ? 'application/octet-stream' : (ride && ride[m[2]]) || 'image/jpeg');
       n++;
     }
     if (n) log(`database: ${n} ride file(s) imported from ${ridesDir}`);
@@ -1122,7 +1122,7 @@ function ridePage(req, account, r, notice) {
   const form = !account
     ? `<p class="muted"><a href="${BASE}/login">Sign in</a> to rate it.</p>`
     : own ? '<p class="muted">Your ride: others rate it.</p>'
-    : `<form method="post" action="${BASE}/ratemyride/${r.id}/rate" class="ratef"><span class="muted">${mine ? `Your rating: ${stars(mine)}. Change it:` : 'Rate it:'}</span> ${[1, 2, 3, 4, 5].map((n) => `<button class="secondary" type="submit" name="stars" value="${n}" title="${n} star${n === 1 ? '' : 's'}">${'★'.repeat(n)}</button>`).join(' ')}</form>`;
+    : `<form method="post" action="${BASE}/ratemyride/${r.id}/rate" class="ratef"><span class="muted">${mine ? `Your rating: ${stars(mine)}. Change it:` : 'Rate it:'}</span> ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<button class="secondary" type="submit" name="stars" value="${n}" title="${n} out of 10">${n}</button>`).join(' ')}</form>`;
   return layout(req, r.name, `
 <div class="grid">
 <div class="card">${photo}</div>
@@ -1172,7 +1172,7 @@ async function handleSite(req, res, parts, method, ip) {
       if (!sameOrigin(req)) return send(res, 403, errorPage(req, 403, 'The form came from somewhere else.', account), 'text/html; charset=utf-8');
       const form = await readForm(req);
       if (r.ownerId === account.id) return send(res, 200, ridePage(req, account, r, 'That is your own ride.'), 'text/html; charset=utf-8');
-      if (!rateRide(r, account, form.stars)) return send(res, 400, errorPage(req, 400, 'A rating is 1 to 5 stars.', account), 'text/html; charset=utf-8');
+      if (!rateRide(r, account, form.stars)) return send(res, 400, errorPage(req, 400, 'A rating is 1 to 10.', account), 'text/html; charset=utf-8');
       log(`Rate My Ride: ${account.gamertag} rated "${r.name}" ${Math.round(Number(form.stars))} on the website`);
       return redirect(res, `${BASE}/ratemyride/${r.id}`);
     }
@@ -1372,39 +1372,41 @@ async function handleApi(req, res, parts, method, ip) {
   if (parts[0] === 'rides') {
     if (parts.length === 1 && method === 'GET') {
       const q = new URL(req.url, 'http://localhost').searchParams;
-      const { total, rides: list } = listRides(q.get('by') || 'rank', q.get('gamer') || '', q.get('from'), q.get('count'));
-      return send(res, 200, { total, rides: list.map((r) => rideJson(req, r, account)) });
+      const { total, rides: list } = listRides(q.get('by') || 'rank', q.get('gamer') || '', q.get('from'), q.get('count'), q.get('xuid'), q.get('exclude'));
+      const ranks = rideRanks();
+      return send(res, 200, { total, rides: list.map((r) => rideJson(req, r, account, ranks)) });
     }
     if (parts.length === 1 && method === 'POST') {
       if (rateLimited(ip, 'ride', 10, 60000)) return send(res, 429, { error: 'too many uploads; wait a minute' });
-      const name = String(body.name || '').trim();
-      if (!RIDE_NAME.test(name)) return send(res, 400, { error: 'the name is 1 to 40 letters, digits, spaces or . , \' ! _ -' });
-      const data = Buffer.from(String(body.data || ''), 'base64');
-      if (!data.length || data.length > RIDE_FILE_MAX) return send(res, 400, { error: `the car data is 1 byte to ${RIDE_FILE_MAX} bytes, base64` });
-      const photo = body.photo ? Buffer.from(String(body.photo), 'base64') : null;
-      const type = photo ? photoType(photo) : null;
-      if (photo && (!type || photo.length > RIDE_PHOTO_MAX)) return send(res, 400, { error: `the photo is a JPEG or PNG of up to ${RIDE_PHOTO_MAX} bytes, base64` });
-      const r = {
-        id: rides.data.nextId++, ownerId: account.id, owner: account.gamertag, ownerXuid: account.xuid,
-        name, vehicle: String(body.vehicle || '').slice(0, 40), price: Math.max(0, Math.floor(Number(body.price) || 0)),
-        size: data.length, photo: type, ratingSum: 0, ratingCount: 0, ratings: {}, uploaded: new Date().toISOString(),
-      };
-      await putFile(`rides/${r.id}.bin`, data, 'application/octet-stream');
-      if (photo) await putFile(`rides/${r.id}.photo`, photo, type);
+      const up = parseRideUpload(body);
+      if (up.error) return send(res, 400, { error: up.error });
+      const r = { id: rides.data.nextId++, ownerId: account.id, owner: account.gamertag, ownerXuid: account.xuid, ratingSum: 0, ratingCount: 0, ratings: {} };
+      await storeRideUpload(r, up);
       rides.data.rides.push(r);
       rides.save();
-      log(`Rate My Ride: ${account.gamertag} uploaded "${name}" (${data.length} bytes${photo ? ', a photo' : ''})`);
+      log(`Rate My Ride: ${account.gamertag} uploaded "${r.name}" (${r.size} bytes${r.photo ? ', a photo' : ''}${r.photo2 ? ', a second photo' : ''})`);
       return send(res, 201, { ok: true, id: r.id, ride: rideJson(req, r, account) });
     }
     const r = parts.length >= 2 ? rideById(parts[1]) : null;
     if (!r) return send(res, 404, { error: 'no such ride' });
     if (parts.length === 2 && method === 'GET') return send(res, 200, rideJson(req, r, account));
+    if (parts.length === 2 && method === 'POST') {
+      // The game's "change ride": the same ride (its id, its page) with new files and data; the ratings start over.
+      if (r.ownerId !== account.id) return send(res, 403, { error: 'not your ride' });
+      if (rateLimited(ip, 'ride', 10, 60000)) return send(res, 429, { error: 'too many uploads; wait a minute' });
+      const up = parseRideUpload(body);
+      if (up.error) return send(res, 400, { error: up.error });
+      await storeRideUpload(r, up);
+      r.ratingSum = 0; r.ratingCount = 0; r.ratings = {};
+      rides.save();
+      log(`Rate My Ride: ${account.gamertag} replaced "${r.name}" (${r.size} bytes${r.photo ? ', a photo' : ''})`);
+      return send(res, 200, { ok: true, id: r.id, ride: rideJson(req, r, account) });
+    }
     if (parts.length === 2 && method === 'DELETE') {
       if (r.ownerId !== account.id) return send(res, 403, { error: 'not your ride' });
       rides.data.rides = rides.data.rides.filter((x) => x.id !== r.id);
       rides.save();
-      await deleteFile(`rides/${r.id}.bin`);
-      await deleteFile(`rides/${r.id}.photo`);
+      for (const ext of ['bin', 'photo', 'photo2']) await deleteFile(`rides/${r.id}.${ext}`);
       log(`Rate My Ride: ${account.gamertag} deleted "${r.name}"`);
       return send(res, 200, { ok: true });
     }
@@ -1414,11 +1416,20 @@ async function handleApi(req, res, parts, method, ip) {
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': f.data.length, 'Cache-Control': 'no-cache' });
       return res.end(f.data);
     }
+    if (parts.length === 3 && parts[2] === 'userdata' && method === 'POST') {
+      // The game's own 64 bytes on a ride (its vehicle, price, times bought, money earned), which
+      // any player's game may replace: buying a ride credits the seller's record this way.
+      const userData = parseUserData(body.userData);
+      if (userData === null) return send(res, 400, { error: 'userData is up to 64 bytes, base64' });
+      r.userData = userData;
+      rides.save();
+      return send(res, 200, { ok: true, ride: rideJson(req, r, account) });
+    }
     if (parts.length === 3 && parts[2] === 'rate' && method === 'POST') {
       if (r.ownerId === account.id) return send(res, 400, { error: 'your own ride' });
-      if (!rateRide(r, account, body.stars)) return send(res, 400, { error: 'stars is 1 to 5' });
+      if (!rateRide(r, account, body.stars)) return send(res, 400, { error: 'stars is 1 to 10' });
       log(`Rate My Ride: ${account.gamertag} rated "${r.name}" ${Math.round(Number(body.stars))}`);
-      return send(res, 200, { ok: true, rating: rideRating(r), ratings: r.ratingCount });
+      return send(res, 200, { ok: true, rating: rideRating(r), ratings: r.ratingCount, ride: rideJson(req, r, account) });
     }
   }
 
@@ -1513,7 +1524,7 @@ function sendStorageFile(req, res, name) {
 // --- Rate My Ride -------------------------------------------------------------------------
 //
 // The rides players upload: the game's car data as a file, a photo, a name, a
-// price, and the ratings other players give (1 to 5 stars). The game's own Rate
+// price, and the ratings other players give (1 to 10, the game's scale). The game's own Rate
 // My Ride menu spoke to Rockstar's upload service; this is the same thing on
 // this server, reachable from the game (the routes under /rides) and shown on
 // the website (/ratemyride), where signed-in players rate rides too.
@@ -1529,36 +1540,92 @@ function rideById(id) {
 function rideRating(r) {
   return r.ratingCount ? Math.round((r.ratingSum / r.ratingCount) * 100) / 100 : 0;
 }
-function rideJson(req, r, account) {
+function rankOrder(a, b) {
+  return rideRating(b) - rideRating(a) || b.ratingCount - a.ratingCount || b.id - a.id;
+}
+// Every ride's rank: 1 for the best rated.
+function rideRanks() {
+  const ranks = new Map();
+  rides.data.rides.slice().sort(rankOrder).forEach((r, i) => ranks.set(r.id, i + 1));
+  return ranks;
+}
+function rideJson(req, r, account, ranks) {
   return {
     id: r.id, name: r.name, vehicle: r.vehicle, owner: r.owner, ownerXuid: r.ownerXuid,
-    price: r.price, rating: rideRating(r), ratings: r.ratingCount, size: r.size,
+    price: r.price, rating: rideRating(r), ratings: r.ratingCount, rank: (ranks || rideRanks()).get(r.id) || 0,
+    size: r.size, fileSizes: [r.size, r.photoSize || 0, r.photo2Size || 0],
     uploaded: r.uploaded, photo: r.photo ? `${siteUrl(req)}/rides/${r.id}/photo` : null,
+    photo2: r.photo2 ? `${siteUrl(req)}/rides/${r.id}/photo2` : null,
+    userData: r.userData || null, category: r.category || 0,
     yours: !!account && r.ownerId === account.id,
     yourRating: account && r.ratings ? (r.ratings[String(account.id)] || 0) : 0,
   };
 }
-// The rides in an order: rank (best rated first, then most rated), new, random, or one gamer's.
-function listRides(by, gamer, from, count) {
+// The rides in an order: rank (best rated first, then most rated), new, random, or one gamer's
+// (by gamertag, or by XUID when `xuid` is given). `exclude` leaves one owner's rides out (the
+// game's random pick skips the player's own); `count` may be 0 for just the total.
+function listRides(by, gamer, from, count, xuid, exclude) {
   let all = rides.data.rides.slice();
   if (by === 'gamer') {
     const low = String(gamer || '').toLowerCase();
-    all = all.filter((r) => r.owner.toLowerCase() === low);
+    const x = normId(xuid);
+    all = all.filter((r) => (x ? r.ownerXuid === x : r.owner.toLowerCase() === low));
   }
+  const ex = normId(exclude);
+  if (ex) all = all.filter((r) => r.ownerXuid !== ex);
   if (by === 'random') {
     for (let i = all.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [all[i], all[j]] = [all[j], all[i]]; }
   } else if (by === 'new' || by === 'gamer') {
     all.sort((a, b) => b.id - a.id);
   } else {
-    all.sort((a, b) => rideRating(b) - rideRating(a) || b.ratingCount - a.ratingCount || b.id - a.id);
+    all.sort(rankOrder);
   }
   const start = Math.max(0, Number(from) || 0);
-  const n = Math.min(100, Math.max(1, Number(count) || 20));
+  const n = count === null || count === undefined || count === '' ? 20 : Math.min(100, Math.max(0, Number(count) || 0));
   return { total: all.length, rides: all.slice(start, start + n) };
+}
+// A ride as it is uploaded: {name, vehicle, price, data: base64, photo: base64, photo2: base64,
+// userData: base64 (the game's 64 bytes), category (0 to 63)}; or the error when it is not one.
+function parseRideUpload(body) {
+  const name = String(body.name || '').trim();
+  if (!RIDE_NAME.test(name)) return { error: 'the name is 1 to 40 letters, digits, spaces or . , \' ! _ -' };
+  const data = Buffer.from(String(body.data || ''), 'base64');
+  if (!data.length || data.length > RIDE_FILE_MAX) return { error: `the car data is 1 byte to ${RIDE_FILE_MAX} bytes, base64` };
+  const photos = [];
+  for (const key of ['photo', 'photo2']) {
+    const photo = body[key] ? Buffer.from(String(body[key]), 'base64') : null;
+    const type = photo ? photoType(photo) : null;
+    if (photo && (!type || photo.length > RIDE_PHOTO_MAX)) return { error: `${key} is a JPEG or PNG of up to ${RIDE_PHOTO_MAX} bytes, base64` };
+    photos.push({ photo, type });
+  }
+  const userData = parseUserData(body.userData);
+  if (userData === null) return { error: 'userData is up to 64 bytes, base64' };
+  return {
+    name, vehicle: String(body.vehicle || '').slice(0, 40), price: Math.max(0, Math.floor(Number(body.price) || 0)),
+    data, photo: photos[0], photo2: photos[1], userData, category: Math.max(0, Math.min(63, Math.floor(Number(body.category) || 0))),
+  };
+}
+// base64 of up to 64 bytes, as kept ('' when there is none); null when the text is not that.
+function parseUserData(text) {
+  if (text === undefined || text === null || text === '') return '';
+  const bytes = Buffer.from(String(text), 'base64');
+  if (!bytes.length || bytes.length > 64) return null;
+  return bytes.toString('base64');
+}
+// Writes an upload's files and fields into the ride `r`.
+async function storeRideUpload(r, up) {
+  await putFile(`rides/${r.id}.bin`, up.data, 'application/octet-stream');
+  for (const [key, p] of [['photo', up.photo], ['photo2', up.photo2]]) {
+    if (p.photo) await putFile(`rides/${r.id}.${key}`, p.photo, p.type); else await deleteFile(`rides/${r.id}.${key}`);
+    r[key] = p.type;
+    r[`${key}Size`] = p.photo ? p.photo.length : 0;
+  }
+  r.name = up.name; r.vehicle = up.vehicle; r.price = up.price; r.size = up.data.length;
+  r.userData = up.userData; r.category = up.category; r.uploaded = new Date().toISOString();
 }
 function rateRide(r, account, value) {
   const s = Math.round(Number(value));
-  if (!(s >= 1 && s <= 5)) return false;
+  if (!(s >= 1 && s <= 10)) return false;
   if (!r.ratings) r.ratings = {};
   const key = String(account.id);
   if (r.ratings[key]) { r.ratingSum -= r.ratings[key]; r.ratingCount -= 1; }
@@ -1573,17 +1640,19 @@ function photoType(buf) {
   if (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
   return null;
 }
-async function sendRidePhoto(res, id) {
+async function sendRidePhoto(res, id, which) {
   const r = rideById(id);
-  if (!r || !r.photo) return send(res, 404, { error: 'no photo' });
-  const f = await getFile(`rides/${r.id}.photo`);
+  const key = which === 'photo2' ? 'photo2' : 'photo';
+  if (!r || !r[key]) return send(res, 404, { error: 'no photo' });
+  const f = await getFile(`rides/${r.id}.${key}`);
   if (!f) return send(res, 404, { error: 'no photo' });
-  res.writeHead(200, { 'Content-Type': r.photo, 'Content-Length': f.data.length, 'Cache-Control': 'public, max-age=3600' });
+  res.writeHead(200, { 'Content-Type': r[key], 'Content-Length': f.data.length, 'Cache-Control': 'public, max-age=3600' });
   res.end(f.data);
 }
+// A rating out of 10 as ten stars.
 function stars(n) {
-  const full = Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
-  return '★'.repeat(full) + '☆'.repeat(5 - full);
+  const full = Math.max(0, Math.min(10, Math.round(Number(n) || 0)));
+  return '★'.repeat(full) + '☆'.repeat(10 - full);
 }
 
 const ASSET_TYPES = { '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
@@ -1614,8 +1683,8 @@ async function handle(req, res) {
   if (parts[0] === 'assets' && parts.length === 2 && method === 'GET') {
     return sendAsset(req, res, parts[1]);
   }
-  if (parts[0] === 'rides' && parts.length === 3 && parts[2] === 'photo' && method === 'GET') {
-    return sendRidePhoto(res, parts[1]);
+  if (parts[0] === 'rides' && parts.length === 3 && (parts[2] === 'photo' || parts[2] === 'photo2') && method === 'GET') {
+    return sendRidePhoto(res, parts[1], parts[2]);
   }
   if (parts.length && API_ROOTS.has(parts[0])) {
     return handleApi(req, res, parts, method, ip);
