@@ -44,6 +44,13 @@ class ServerApi {
   // Leaderboard writes (kept by the server; nothing reads them back yet).
   bool WriteStats(const Json& stats);
 
+  // Title storage: the files the server keeps for the game to download
+  // (GET /storage/title lists those whose names match `pattern`, with a * as
+  // a wildcard; GET /storage/title/<name> is one of them). GetTitleStorage
+  // returns the HTTP status (404: no such file; 0: the server was not reached).
+  bool ListTitleStorage(const std::string& pattern, Json* out);
+  int GetTitleStorage(const std::string& name, std::vector<uint8_t>* out, uint64_t* modified_ms);
+
  private:
   // Returns the HTTP status (0 when the server was not reached); the body is
   // parsed into `reply` when it is JSON.

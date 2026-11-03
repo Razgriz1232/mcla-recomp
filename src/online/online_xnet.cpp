@@ -391,6 +391,29 @@ extern "C" REX_FUNC(__imp__NetDll_bind) {
   }
 }
 
+// A TCP connection the game opens (the title server: Rockstar's upload service
+// behind Rate My Ride, the online tournament): logged with its target, so the
+// log shows what the game reaches for.
+extern "C" REX_FUNC(__imp__NetDll_connect) {
+  static const ExportFunc original = OriginalExport("__imp__NetDll_connect");
+  const uint32_t handle = ctx.r4.u32;
+  const uint32_t name_ptr = ctx.r5.u32;
+  std::string target = "?";
+  if (name_ptr) {
+    const auto* name = sys::kernel_state()->memory()->TranslateVirtual<const XSOCKADDR_IN*>(name_ptr);
+    if (uint16_t(name->sin_family) == 2) {
+      target = Ipv4ToString(name->sin_addr.host_order()) + ":" + std::to_string(uint16_t(name->sin_port));
+    }
+  }
+  if (!original) {
+    ONLINE_WARN("NetDll_connect: the SDK's export was not found");
+    ctx.r3.u64 = 0xFFFFFFFFu;
+    return;
+  }
+  original(ctx, base);
+  ONLINE_LOG("connect({:08X}, {}) -> {}", handle, target, int32_t(ctx.r3.s32));
+}
+
 // --- The exports -------------------------------------------------------------
 
 REX_HOOK(__imp__NetDll_XNetStartup, XNetStartup_entry)

@@ -30,6 +30,8 @@
 
 namespace mcla::online {
 void CacheQosData(uint64_t session_id, std::vector<uint8_t> data);  // online_xnet.cpp
+// online_storage.cpp: XStorage and XStringVerify (XLiveBase messages).
+bool HandleStorageMessage(uint32_t message, uint32_t buffer_ptr, uint32_t* result);
 }
 
 namespace {
@@ -834,7 +836,7 @@ bool HandleXLiveBase(uint32_t message, uint32_t buffer_ptr, uint32_t* result) {
       return true;
     }
     default:
-      return false;
+      return HandleStorageMessage(message, buffer_ptr, result);
   }
 }
 

@@ -78,6 +78,7 @@ set(MCLA_SOURCES
     src/online/online_xnet.cpp
     src/online/online_user.cpp
     src/online/online_xgi.cpp
+    src/online/online_storage.cpp
 )
 
 if(WIN32)

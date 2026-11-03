@@ -63,9 +63,26 @@ JSON in and out. The game's routes need `Authorization: Bearer <game key>`; with
 | `POST /sessions/:id/migrate` | key | a lobby like `POST /sessions` | The new host's lobby replaces `:id`. |
 | `PUT /sessions/:id/qos` | key, host | `{qos: base64}` | The host's QoS data (XNetQosListen). |
 | `GET /sessions/:id/qos` | key | | `{qos: base64}`. |
+| `GET /storage/title` | key | `?name=pattern` | The title storage files whose names match (a `*` is a wildcard): `{files:[{name, size, modified}]}`. |
+| `GET /storage/title/:name` | key | | One title storage file, as bytes (404 when there is none). |
+| `GET /rides` | key | `?by=rank|new|random|gamer&gamer=&from=&count=` | Rate My Ride: the rides in that order, `{total, rides:[{id, name, vehicle, owner, ownerXuid, price, rating, ratings, size, uploaded, photo, yours, yourRating}]}`. |
+| `POST /rides` | key | `{name, vehicle, price, data: base64, photo: base64}` | Uploads a ride: the car data (up to 2 MB) and a JPEG or PNG photo (up to 1 MB). Ten a minute per address. |
+| `GET /rides/:id` | key | | One ride. `GET /rides/:id/file` is its car data as bytes; `GET /rides/:id/photo` its photo (no key: the website shows it). |
+| `POST /rides/:id/rate` | key | `{stars: 1..5}` | Rates a ride (one rating per account, changed by rating again; not your own). |
+| `DELETE /rides/:id` | key, owner | | Removes a ride. |
 | `POST /stats` | key | `{sessionId, xuid, titleId, views:[{viewId, properties}]}` | A stats write for the player `xuid`, from them or from the host of `sessionId`. Pays the XP of a race finished and, when the win property says so, of a race won, once per player and session; answers `{awards, progress}`. The last 500 writes are kept and logged in full. |
 
 Session `state`: 0 lobby, 1 registration (arbitration done), 2 in game, 3 reporting, 4 deleted. `flags` are the game's `XSESSION_CREATE_*` bits (0x01 host, 0x02 presence, 0x04 stats, 0x08 matchmaking, 0x10 arbitration, 0x20 peer network, 0x400 no joining in progress). Contexts are the game's `XUSER_CONTEXT` ids and values (0x800A game type, 0x800B game mode); the server matches them exactly, except the presence context (0x8001).
+
+## Title storage
+
+Xbox LIVE kept, for each game, files its publisher put there (title-managed storage), and the game reads some at the city load: its post-release content archives (`tms_boot`, `tms_boot2`: string tables, vinyl preset names). The game asks the server for a file by name (`XStorageBuildServerPath`, `XStorageEnumerate`, `XStorageDownloadToMemory`), and the server answers from the `data/storage/title` folder: put a file there and the game downloads it; with no file of that name the game goes on without, as it did before. Rockstar's own archives are not in this repository.
+
+## Rate My Ride
+
+The game's Rate My Ride menu (pause menu, Modes, Xbox Live) let players send a car with a photo to Rockstar's upload service, browse the rides others sent, rate them and buy them; the service is gone. This server has the same thing: rides are kept in `data/rides.json` with the car data and the photo as files in `data/rides`, the game's routes are under `/rides`, and the website shows them under `/ratemyride` (every ride with its photo, best rated or newest first, and a page per ride where signed-in players give 1 to 5 stars; the home page shows the three best, the account page the player's own). A rating is one per account per ride, changed by rating again; nobody rates their own.
+
+What the game does with it: nothing yet. The game's menu talks Rockstar's own protocol (the RAGE library's upload commands), and the online layer does not translate those into these routes yet; until it does, the menu says the server is not available. The routes are there for that translation, and for anything else that uploads a ride.
 
 ## Levels and XP
 

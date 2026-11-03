@@ -142,6 +142,7 @@ if (process.env.MCLA_COOKIE_SECRET) {
 
 function refreshAll() {
   accounts.refresh();
+  rides.refresh();
   state.refresh();
 }
 
@@ -727,6 +728,7 @@ button.secondary,.pill-button.ghost{background:rgba(255,255,255,.08);color:#fff;
 .lvl{display:inline-flex;align-items:center;gap:12px;margin-top:16px;padding:6px 14px 6px 6px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid var(--line)}.lvl b{display:inline-flex;align-items:center;height:30px;padding:0 12px;border-radius:999px;background:var(--yellow);color:#111;font-weight:700;font-size:13px;letter-spacing:.06em}.lvl span{font-size:14px;font-weight:300;color:rgba(255,255,255,.8)}
 .lvl.big{margin:0}.progress{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin:4px 0 20px}.progress .xp{flex:1;min-width:220px}.xpbar{height:8px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}.xpbar div{height:100%;background:var(--yellow);border-radius:999px}.xptext{font-size:13px;font-weight:300;color:var(--muted);margin-top:8px}
 b.gold{color:var(--yellow)}table.lb td:first-child{width:36px}.pill i{font-style:normal;opacity:.6;margin-left:4px}
+.rides{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;margin-top:18px}.ride{display:block;color:var(--text);text-decoration:none;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:12px;overflow:hidden;transition:transform .15s,border-color .15s}.ride:hover{transform:translateY(-2px);border-color:rgba(255,255,255,.25)}.ride img,.nophoto{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:#0b0b0e}.nophoto{display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:13px;letter-spacing:.08em;text-transform:uppercase}.nophoto.big{aspect-ratio:4/3;border-radius:10px}.ridebody{display:flex;flex-direction:column;gap:3px;padding:12px 14px 14px;font-size:14px}.ridebody b{font-weight:600;font-size:15px}.stars{color:var(--yellow);letter-spacing:.06em}.stars small{color:var(--muted);letter-spacing:0;margin-left:4px}.bigphoto{display:block;width:100%;border-radius:10px;background:#0b0b0e}.ratef{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:16px}.ratef button{padding:8px 12px;letter-spacing:.06em}#rmr{grid-column:1/-1}
 footer{text-align:center;color:rgba(255,255,255,.45);font-size:12.5px;padding:22px 16px 28px;font-weight:300}footer a{color:rgba(255,255,255,.7)}
 @media (min-width:1500px){.topnav{padding:34px 72px 8px}main{padding:10px 72px 48px}.hero{margin:0 -72px;padding:0 72px}.hero .place,.hero .bottomleft{left:72px}.hero .track,.hero .points{right:72px}.hero .place{top:130px}.hero .track{top:140px}}
 @media (max-width:980px){.grid{grid-template-columns:1fr}.topnav{padding:22px 24px 4px}.topnav .links{display:none}main{padding:8px 24px 30px}.hero{margin:0 -24px;padding:0 24px;min-height:0}.panel{min-height:0}
@@ -738,7 +740,7 @@ footer{text-align:center;color:rgba(255,255,255,.45);font-size:12.5px;padding:22
 <div class="panel">
 <header class="topnav">
   <a class="logo" href="${BASE}/">MC<b>LA</b><small>Online</small></a>
-  <nav class="links"><a href="${BASE}/#lobbies">Lobbies</a><a href="${BASE}/leaderboard">Leaderboard</a><a href="${BASE}/#play">How to play</a><a href="${BASE}/account">Account</a></nav>
+  <nav class="links"><a href="${BASE}/#lobbies">Lobbies</a><a href="${BASE}/leaderboard">Leaderboard</a><a href="${BASE}/ratemyride">Rate My Ride</a><a href="${BASE}/#play">How to play</a><a href="${BASE}/account">Account</a></nav>
   <div class="right">${nav}</div>
 </header>
 <main>${body}</main>
@@ -755,6 +757,7 @@ function homePage(req, account) {
     ? st.sessions.map((s) => `<tr><td>${h(s.host)}</td><td>${h(STATE_NAMES[s.state] || s.state)}</td><td>${s.players} / ${s.publicSlots}</td><td class="muted">${h(s.created.slice(11, 19))} UTC</td></tr>`).join('')
     : '<tr><td colspan="4" class="muted">No lobby is open right now. Start one from the game and it shows up here.</td></tr>';
   const playerList = st.players.length ? st.players.map((p) => `<span class="pill on">${h(p.name)} <i>${p.level}</i></span>`).join('') : '<span class="muted">Nobody is in the game right now.</span>';
+  const bestRides = listRides('rank', '', 0, 3).rides.map((r) => rideCard(req, r)).join('');
   const topRows = st.topRacers.map((r) => `<tr><td class="muted">${r.rank}</td><td>${h(r.name)}</td><td><b class="gold">${r.level}</b> <span class="muted">${h(r.title)}</span></td><td>${r.wins}</td><td>${r.xp}</td></tr>`).join('');
   const initials = (name) => name.split(' ').filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
   const avatars = ['<span class="avatar" title="Midnight Club: Los Angeles">MC</span>']
@@ -794,6 +797,10 @@ function homePage(req, account) {
   <div class="card" id="top"><h2>Top racers</h2>
     ${topRows ? `<table class="lb"><tr><th>#</th><th>Racer</th><th>Level</th><th>Wins</th><th>XP</th></tr>${topRows}</table>` : `<p class="muted">Nobody has raced yet. A race finished online is ${XP_FINISH} XP, a win ${XP_WIN} XP on top.</p>`}
     <p class="muted" style="margin:14px 0 0;font-weight:300"><a href="${BASE}/leaderboard">The whole leaderboard</a>. A race finished online is ${XP_FINISH} XP, a win ${XP_WIN} XP on top; level 2 takes 200 XP, and each level after it 100 XP more than the one before.</p>
+  </div>
+  <div class="card" id="rmr"><h2>Rate My Ride</h2>
+    ${bestRides ? `<div class="rides">${bestRides}</div>` : '<p class="muted">No ride yet. Upload yours from the game: pause menu, Modes, Xbox Live, Rate My Ride.</p>'}
+    <p class="muted" style="margin:14px 0 0;font-weight:300"><a href="${BASE}/ratemyride">All the rides</a>, best rated first. Sign in to give stars.</p>
   </div>
   <div class="card" id="play"><h2>How to play online</h2>
     <ol class="steps">
@@ -848,6 +855,7 @@ function accountPage(req, account, notice, error) {
   const url = siteUrl(req);
   const online = !!state.data.players[account.xuid];
   const pr = progressOf(account);
+  const myRides = listRides('gamer', account.gamertag, 0, 50).rides;
   const isDefault = url.toLowerCase() === GAME_DEFAULT_SERVER;
   const snippet = isDefault
     ? `mcla_online = true\nmcla_online_key = "${account.gameKey}"`
@@ -872,6 +880,8 @@ function accountPage(req, account, notice, error) {
 ${notice ? `<div class="ok">${h(notice)}</div>` : ''}${error ? `<div class="error">${h(error)}</div>` : ''}
 <h3>Recent races</h3>
 ${historyRows ? `<table><tr><th>When</th><th>Result</th><th>XP</th></tr>${historyRows}</table>` : '<p class="muted">No race yet. Finish one online and it shows here with its XP.</p>'}
+<h3>Your rides</h3>
+${myRides.length ? `<div class="rides">${myRides.map((r) => rideCard(req, r)).join('')}</div>` : '<p class="muted">None yet. Upload one from the game: pause menu, Modes, Xbox Live, Rate My Ride.</p>'}
 <h3>Your game key</h3>
 <p class="muted">The key signs your game in. Treat it like a password: anyone with it plays as you. Make a new one if it leaks; the old one stops working at once.</p>
 <p class="key" id="key">${h(account.gameKey)}</p>
@@ -903,6 +913,50 @@ ${rows ? `<table class="lb"><tr><th>#</th><th>Racer</th><th>Level</th><th>Wins</
 </div>`, account);
 }
 
+
+function rideCard(req, r) {
+  const h = escapeHtml;
+  const photo = r.photo ? `<img src="${BASE}/rides/${r.id}/photo" alt="" loading="lazy">` : `<div class="nophoto">no photo</div>`;
+  return `<a class="ride" href="${BASE}/ratemyride/${r.id}">${photo}<div class="ridebody"><b>${h(r.name)}</b><span class="muted">${h(r.vehicle || '')}</span><span class="muted">by ${h(r.owner)}</span><span class="stars" title="${rideRating(r)} over ${r.ratingCount} rating${r.ratingCount === 1 ? '' : 's'}">${stars(rideRating(r))} <small>${r.ratingCount}</small></span></div></a>`;
+}
+
+function ratemyridePage(req, account, by) {
+  const order = by === 'new' ? 'new' : 'rank';
+  const { total, rides: list } = listRides(order, '', 0, 60);
+  const cards = list.map((r) => rideCard(req, r)).join('');
+  return layout(req, 'Rate My Ride', `
+<div class="card"><h2>Rate My Ride <span class="pill">${total} ride${total === 1 ? '' : 's'}</span></h2>
+<p class="muted" style="font-weight:300">The rides players send from the game's Rate My Ride menu. Open one to see it and give it stars; the game shows the same ratings. Order: ${order === 'rank' ? '<b>best rated</b>' : `<a href="${BASE}/ratemyride">best rated</a>`} · ${order === 'new' ? '<b>newest</b>' : `<a href="${BASE}/ratemyride?by=new">newest</a>`}</p>
+${cards ? `<div class="rides">${cards}</div>` : '<p class="muted">No ride yet. Upload one from the game: pause menu, Modes, Xbox Live, Rate My Ride.</p>'}
+</div>`, account);
+}
+
+function ridePage(req, account, r, notice) {
+  const h = escapeHtml;
+  const mine = r.ratings && account ? (r.ratings[String(account.id)] || 0) : 0;
+  const photo = r.photo ? `<img class="bigphoto" src="${BASE}/rides/${r.id}/photo" alt="">` : '<div class="nophoto big">no photo</div>';
+  const own = account && r.ownerId === account.id;
+  const form = !account
+    ? `<p class="muted"><a href="${BASE}/login">Sign in</a> to rate it.</p>`
+    : own ? '<p class="muted">Your ride: others rate it.</p>'
+    : `<form method="post" action="${BASE}/ratemyride/${r.id}/rate" class="ratef"><span class="muted">${mine ? `Your rating: ${stars(mine)}. Change it:` : 'Rate it:'}</span> ${[1, 2, 3, 4, 5].map((n) => `<button class="secondary" type="submit" name="stars" value="${n}" title="${n} star${n === 1 ? '' : 's'}">${'★'.repeat(n)}</button>`).join(' ')}</form>`;
+  return layout(req, r.name, `
+<div class="grid">
+<div class="card">${photo}</div>
+<div class="card"><h2>${h(r.name)}</h2>
+<table>
+<tr><th>Car</th><td>${r.vehicle ? h(r.vehicle) : '<span class="muted">unknown</span>'}</td></tr>
+<tr><th>Owner</th><td>${h(r.owner)}</td></tr>
+<tr><th>Rating</th><td><span class="stars">${stars(rideRating(r))}</span> ${rideRating(r) || '0'} over ${r.ratingCount} rating${r.ratingCount === 1 ? '' : 's'}</td></tr>
+<tr><th>Price</th><td>${r.price ? '$' + Number(r.price).toLocaleString('en-US') : '<span class="muted">not for sale</span>'}</td></tr>
+<tr><th>Uploaded</th><td>${h(String(r.uploaded).replace('T', ' ').slice(0, 16))} UTC</td></tr>
+</table>
+${notice ? `<div class="ok">${h(notice)}</div>` : ''}
+${form}
+<p class="muted" style="margin-top:18px;font-weight:300"><a href="${BASE}/ratemyride">All rides</a></p>
+</div></div>`, account);
+}
+
 function errorPage(req, status, text, account) {
   return layout(req, `${status}`, `<div class="narrow card"><h2>${status}</h2><p>${escapeHtml(text)}</p><p><a href="${BASE}/">Home</a></p></div>`, account);
 }
@@ -921,6 +975,24 @@ async function handleSite(req, res, parts, method, ip) {
   }
   if (first === 'leaderboard' && method === 'GET') {
     return send(res, 200, leaderboardPage(req, account), 'text/html; charset=utf-8');
+  }
+  if (first === 'ratemyride') {
+    if (parts.length === 1 && method === 'GET') {
+      const by = new URL(req.url, 'http://localhost').searchParams.get('by') || 'rank';
+      return send(res, 200, ratemyridePage(req, account, by), 'text/html; charset=utf-8');
+    }
+    const r = parts.length >= 2 ? rideById(parts[1]) : null;
+    if (!r) return send(res, 404, errorPage(req, 404, 'No such ride.', account), 'text/html; charset=utf-8');
+    if (parts.length === 2 && method === 'GET') return send(res, 200, ridePage(req, account, r), 'text/html; charset=utf-8');
+    if (parts.length === 3 && parts[2] === 'rate' && method === 'POST') {
+      if (!account) return redirect(res, `${BASE}/login`);
+      if (!sameOrigin(req)) return send(res, 403, errorPage(req, 403, 'The form came from somewhere else.', account), 'text/html; charset=utf-8');
+      const form = await readForm(req);
+      if (r.ownerId === account.id) return send(res, 200, ridePage(req, account, r, 'That is your own ride.'), 'text/html; charset=utf-8');
+      if (!rateRide(r, account, form.stars)) return send(res, 400, errorPage(req, 400, 'A rating is 1 to 5 stars.', account), 'text/html; charset=utf-8');
+      log(`Rate My Ride: ${account.gamertag} rated "${r.name}" ${Math.round(Number(form.stars))} on the website`);
+      return redirect(res, `${BASE}/ratemyride/${r.id}`);
+    }
   }
   if (first === 'register') {
     if (method === 'GET') return send(res, account ? 303 : 200, account ? '' : registerPage(req), 'text/html; charset=utf-8', account ? { Location: `${BASE}/account` } : {});
@@ -1099,6 +1171,75 @@ async function handleApi(req, res, parts, method, ip) {
     return send(res, 405, { error: 'method not allowed' });
   }
 
+  if (parts[0] === 'storage' && parts[1] === 'title' && (method === 'GET' || method === 'HEAD')) {
+    if (parts.length === 2) {
+      const pattern = new URL(req.url, 'http://localhost').searchParams.get('name') || '*';
+      const files = storageFiles(pattern);
+      trace(`title storage: ${account.gamertag} lists ${pattern}: ${files.length} file(s)`);
+      return send(res, 200, { files });
+    }
+    if (parts.length === 3) {
+      let name;
+      try { name = decodeURIComponent(parts[2]); } catch (_) { return send(res, 400, { error: 'not a file name' }); }
+      log(`title storage: ${account.gamertag} downloads ${name}`);
+      return sendStorageFile(req, res, name);
+    }
+  }
+
+  if (parts[0] === 'rides') {
+    if (parts.length === 1 && method === 'GET') {
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const { total, rides: list } = listRides(q.get('by') || 'rank', q.get('gamer') || '', q.get('from'), q.get('count'));
+      return send(res, 200, { total, rides: list.map((r) => rideJson(req, r, account)) });
+    }
+    if (parts.length === 1 && method === 'POST') {
+      if (rateLimited(ip, 'ride', 10, 60000)) return send(res, 429, { error: 'too many uploads; wait a minute' });
+      const name = String(body.name || '').trim();
+      if (!RIDE_NAME.test(name)) return send(res, 400, { error: 'the name is 1 to 40 letters, digits, spaces or . , \' ! _ -' });
+      const data = Buffer.from(String(body.data || ''), 'base64');
+      if (!data.length || data.length > RIDE_FILE_MAX) return send(res, 400, { error: `the car data is 1 byte to ${RIDE_FILE_MAX} bytes, base64` });
+      const photo = body.photo ? Buffer.from(String(body.photo), 'base64') : null;
+      const type = photo ? photoType(photo) : null;
+      if (photo && (!type || photo.length > RIDE_PHOTO_MAX)) return send(res, 400, { error: `the photo is a JPEG or PNG of up to ${RIDE_PHOTO_MAX} bytes, base64` });
+      const r = {
+        id: rides.data.nextId++, ownerId: account.id, owner: account.gamertag, ownerXuid: account.xuid,
+        name, vehicle: String(body.vehicle || '').slice(0, 40), price: Math.max(0, Math.floor(Number(body.price) || 0)),
+        size: data.length, photo: type, ratingSum: 0, ratingCount: 0, ratings: {}, uploaded: new Date().toISOString(),
+      };
+      fs.mkdirSync(RIDES_DIR, { recursive: true });
+      fs.writeFileSync(path.join(RIDES_DIR, `${r.id}.bin`), data);
+      if (photo) fs.writeFileSync(path.join(RIDES_DIR, `${r.id}.photo`), photo);
+      rides.data.rides.push(r);
+      rides.save();
+      log(`Rate My Ride: ${account.gamertag} uploaded "${name}" (${data.length} bytes${photo ? ', a photo' : ''})`);
+      return send(res, 201, { ok: true, id: r.id, ride: rideJson(req, r, account) });
+    }
+    const r = parts.length >= 2 ? rideById(parts[1]) : null;
+    if (!r) return send(res, 404, { error: 'no such ride' });
+    if (parts.length === 2 && method === 'GET') return send(res, 200, rideJson(req, r, account));
+    if (parts.length === 2 && method === 'DELETE') {
+      if (r.ownerId !== account.id) return send(res, 403, { error: 'not your ride' });
+      rides.data.rides = rides.data.rides.filter((x) => x.id !== r.id);
+      rides.save();
+      for (const ext of ['bin', 'photo']) { try { fs.unlinkSync(path.join(RIDES_DIR, `${r.id}.${ext}`)); } catch (_) { /* gone */ } }
+      log(`Rate My Ride: ${account.gamertag} deleted "${r.name}"`);
+      return send(res, 200, { ok: true });
+    }
+    if (parts.length === 3 && parts[2] === 'file' && method === 'GET') {
+      const file = path.join(RIDES_DIR, `${r.id}.bin`);
+      let st;
+      try { st = fs.statSync(file); } catch (_) { return send(res, 404, { error: 'no file' }); }
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': st.size, 'Cache-Control': 'no-cache' });
+      return fs.createReadStream(file).pipe(res);
+    }
+    if (parts.length === 3 && parts[2] === 'rate' && method === 'POST') {
+      if (r.ownerId === account.id) return send(res, 400, { error: 'your own ride' });
+      if (!rateRide(r, account, body.stars)) return send(res, 400, { error: 'stars is 1 to 5' });
+      log(`Rate My Ride: ${account.gamertag} rated "${r.name}" ${Math.round(Number(body.stars))}`);
+      return send(res, 200, { ok: true, rating: rideRating(r), ratings: r.ratingCount });
+    }
+  }
+
   if (parts[0] === 'stats') {
     if (method === 'POST') {
       const sessionId = normId(body.sessionId);
@@ -1141,11 +1282,130 @@ async function handleApi(req, res, parts, method, ip) {
   return send(res, 404, { error: 'not found' });
 }
 
-const API_ROOTS = new Set(['players', 'sessions', 'stats']);
+const API_ROOTS = new Set(['players', 'sessions', 'stats', 'storage', 'rides']);
 
 // Static files from the assets folder next to the script (the background
 // photo): by plain name only, so nothing outside the folder can be asked for.
 const ASSETS_DIR = path.join(__dirname, 'assets');
+
+// --- Title storage ----------------------------------------------------------------------
+//
+// The files the game downloads from "title storage" (Xbox LIVE's title-managed
+// storage, which the game reads at the city load for its post-release content
+// archives, tms_boot and tms_boot2). Whoever runs the server puts files in
+// data/storage/title; the game asks for them by name.
+const STORAGE_DIR = path.join(DATA_DIR, 'storage', 'title');
+const STORAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}$/;
+
+function storageFiles(pattern) {
+  let names = [];
+  try { names = fs.readdirSync(STORAGE_DIR); } catch (_) { return []; }
+  const re = new RegExp('^' + String(pattern || '*').split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i');
+  const out = [];
+  for (const name of names.sort()) {
+    if (!STORAGE_NAME.test(name) || !re.test(name)) continue;
+    let st;
+    try { st = fs.statSync(path.join(STORAGE_DIR, name)); } catch (_) { continue; }
+    if (!st.isFile()) continue;
+    out.push({ name, size: st.size, modified: Math.floor(st.mtimeMs) });
+  }
+  return out;
+}
+
+function sendStorageFile(req, res, name) {
+  if (!STORAGE_NAME.test(name) || name.includes('..')) return send(res, 400, { error: 'not a file name' });
+  const file = path.join(STORAGE_DIR, name);
+  let st;
+  try { st = fs.statSync(file); } catch (_) { return send(res, 404, { error: 'no such file' }); }
+  if (!st.isFile()) return send(res, 404, { error: 'no such file' });
+  res.writeHead(200, {
+    'Content-Type': 'application/octet-stream',
+    'Content-Length': st.size,
+    'Last-Modified': st.mtime.toUTCString(),
+    'Cache-Control': 'no-cache',
+  });
+  if (req.method === 'HEAD') return res.end();
+  fs.createReadStream(file).pipe(res);
+}
+
+// --- Rate My Ride -------------------------------------------------------------------------
+//
+// The rides players upload: the game's car data as a file, a photo, a name, a
+// price, and the ratings other players give (1 to 5 stars). The game's own Rate
+// My Ride menu spoke to Rockstar's upload service; this is the same thing on
+// this server, reachable from the game (the routes under /rides) and shown on
+// the website (/ratemyride), where signed-in players rate rides too.
+const rides = new JsonStore('rides.json', { nextId: 1, rides: [] });
+const RIDES_DIR = path.join(DATA_DIR, 'rides');
+const RIDE_NAME = /^[A-Za-z0-9][A-Za-z0-9 .,'!_-]{0,39}$/;
+const RIDE_FILE_MAX = 2 * 1024 * 1024;
+const RIDE_PHOTO_MAX = 1024 * 1024;
+
+function rideById(id) {
+  const n = Number(id);
+  return rides.data.rides.find((r) => r.id === n) || null;
+}
+function rideRating(r) {
+  return r.ratingCount ? Math.round((r.ratingSum / r.ratingCount) * 100) / 100 : 0;
+}
+function rideJson(req, r, account) {
+  return {
+    id: r.id, name: r.name, vehicle: r.vehicle, owner: r.owner, ownerXuid: r.ownerXuid,
+    price: r.price, rating: rideRating(r), ratings: r.ratingCount, size: r.size,
+    uploaded: r.uploaded, photo: r.photo ? `${siteUrl(req)}/rides/${r.id}/photo` : null,
+    yours: !!account && r.ownerId === account.id,
+    yourRating: account && r.ratings ? (r.ratings[String(account.id)] || 0) : 0,
+  };
+}
+// The rides in an order: rank (best rated first, then most rated), new, random, or one gamer's.
+function listRides(by, gamer, from, count) {
+  let all = rides.data.rides.slice();
+  if (by === 'gamer') {
+    const low = String(gamer || '').toLowerCase();
+    all = all.filter((r) => r.owner.toLowerCase() === low);
+  }
+  if (by === 'random') {
+    for (let i = all.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [all[i], all[j]] = [all[j], all[i]]; }
+  } else if (by === 'new' || by === 'gamer') {
+    all.sort((a, b) => b.id - a.id);
+  } else {
+    all.sort((a, b) => rideRating(b) - rideRating(a) || b.ratingCount - a.ratingCount || b.id - a.id);
+  }
+  const start = Math.max(0, Number(from) || 0);
+  const n = Math.min(100, Math.max(1, Number(count) || 20));
+  return { total: all.length, rides: all.slice(start, start + n) };
+}
+function rateRide(r, account, value) {
+  const s = Math.round(Number(value));
+  if (!(s >= 1 && s <= 5)) return false;
+  if (!r.ratings) r.ratings = {};
+  const key = String(account.id);
+  if (r.ratings[key]) { r.ratingSum -= r.ratings[key]; r.ratingCount -= 1; }
+  r.ratings[key] = s;
+  r.ratingSum += s;
+  r.ratingCount += 1;
+  rides.save();
+  return true;
+}
+function photoType(buf) {
+  if (buf.length > 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image/jpeg';
+  if (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+  return null;
+}
+function sendRidePhoto(res, id) {
+  const r = rideById(id);
+  if (!r || !r.photo) return send(res, 404, { error: 'no photo' });
+  const file = path.join(RIDES_DIR, `${r.id}.photo`);
+  let st;
+  try { st = fs.statSync(file); } catch (_) { return send(res, 404, { error: 'no photo' }); }
+  res.writeHead(200, { 'Content-Type': r.photo, 'Content-Length': st.size, 'Cache-Control': 'public, max-age=3600' });
+  fs.createReadStream(file).pipe(res);
+}
+function stars(n) {
+  const full = Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
+  return '★'.repeat(full) + '☆'.repeat(5 - full);
+}
+
 const ASSET_TYPES = { '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 function sendAsset(req, res, name) {
   if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9]+$/.test(name)) return send(res, 404, { error: 'not found' });
@@ -1174,6 +1434,9 @@ async function handle(req, res) {
   if (parts[0] === 'assets' && parts.length === 2 && method === 'GET') {
     return sendAsset(req, res, parts[1]);
   }
+  if (parts[0] === 'rides' && parts.length === 3 && parts[2] === 'photo' && method === 'GET') {
+    return sendRidePhoto(res, parts[1]);
+  }
   if (parts.length && API_ROOTS.has(parts[0])) {
     return handleApi(req, res, parts, method, ip);
   }
@@ -1193,5 +1456,8 @@ server.on('error', (e) => {
 server.listen(PORT, BIND, () => {
   log(`${SITE_NAME}: listening on ${BIND}:${PORT}${BASE ? ` under ${BASE}` : ''}${TRUST_PROXY ? ', behind a proxy' : ''}`);
   log(`data in ${DATA_DIR}: ${accounts.data.accounts.length} account(s)`);
+  try { fs.mkdirSync(STORAGE_DIR, { recursive: true }); } catch (_) { /* read-only: no title storage */ }
+  log(`title storage in ${STORAGE_DIR}: ${storageFiles('*').length} file(s)`);
+  log(`Rate My Ride: ${rides.data.rides.length} ride(s)`);
   if (!HOSTED) log(`the website is at http://localhost:${PORT}${BASE}/`);
 });
