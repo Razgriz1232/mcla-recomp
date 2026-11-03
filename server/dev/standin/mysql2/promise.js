@@ -16,6 +16,7 @@ function createPool(settings) {
   async function query(sql, params = []) {
     log.push(sql.slice(0, 60));
     const s = sql.replace(/\s+/g, ' ').trim();
+    if (s === 'SELECT 1') return [[{ 1: 1 }], []];
     if (/^CREATE TABLE IF NOT EXISTS (mcla_store|mcla_files)/.test(s)) return [[], []];
     let m;
     if ((m = /^SELECT version, data FROM mcla_store WHERE name = \?( AND version <> \?)?$/.exec(s))) {

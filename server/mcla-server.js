@@ -110,8 +110,11 @@ function trace(...parts) {
 // is replaced at an update. The tables are made at the first start, and a
 // store with no row yet is filled from its JSON file when one is there, so
 // the switch from files keeps the accounts.
-const DB_URL = process.env.MCLA_DB_URL || argValue('--db', '');
-const DB_HOST = process.env.MCLA_DB_HOST || '';
+// MCLA_DB_* first; else the names a host sets by itself for the database it
+// made for the app (GoDaddy's Apps: DB_HOST, DB_PORT, DB_NAME, DB_USER,
+// DB_PASSWORD; others: DATABASE_URL).
+const DB_URL = process.env.MCLA_DB_URL || process.env.DATABASE_URL || argValue('--db', '');
+const DB_HOST = process.env.MCLA_DB_HOST || process.env.DB_HOST || '';
 const DB_CONFIGURED = !!(DB_URL || DB_HOST);
 let db = null;  // the mysql2 pool once connected
 
@@ -235,16 +238,46 @@ async function initStorage() {
   } catch (_) {
     throw new Error('a MySQL database is configured but the mysql2 package is not installed: run "npm install" in the app folder (cPanel: Run NPM Install) and start again');
   }
+  const env = process.env;
   const settings = DB_URL
     ? { uri: DB_URL }
-    : { host: DB_HOST, port: Number(process.env.MCLA_DB_PORT) || 3306, user: process.env.MCLA_DB_USER || '', password: process.env.MCLA_DB_PASSWORD || '', database: process.env.MCLA_DB_NAME || '' };
-  // A managed database (a host's, not localhost) usually wants TLS: MCLA_DB_SSL=1
-  // (or "insecure" when its certificate is not one the PC knows).
-  const ssl = String(process.env.MCLA_DB_SSL || '').toLowerCase();
-  if (ssl && ssl !== '0' && ssl !== 'false' && ssl !== 'no') {
-    settings.ssl = ssl === 'insecure' ? { rejectUnauthorized: false } : { rejectUnauthorized: true };
+    : { host: DB_HOST, port: Number(env.MCLA_DB_PORT || env.DB_PORT) || 3306, user: env.MCLA_DB_USER || env.DB_USER || '', password: env.MCLA_DB_PASSWORD || env.DB_PASSWORD || '', database: env.MCLA_DB_NAME || env.DB_NAME || '' };
+  const host = DB_URL ? new URL(DB_URL).hostname : DB_HOST;
+  const local = /^(localhost|127\.0\.0\.1|::1)$/i.test(host);
+  // TLS: MCLA_DB_SSL=1 wants it, 0 refuses it, "insecure" takes any certificate.
+  // Unset, a database elsewhere than this machine is tried with TLS first and
+  // without when it does not speak it (a host's managed database usually does).
+  const ssl = String(env.MCLA_DB_SSL || '').toLowerCase();
+  const connect = async (tls) => {
+    const pool = mysql.createPool({ ...settings, ...(tls ? { ssl: tls } : {}), waitForConnections: true, connectionLimit: 4, charset: 'utf8mb4', supportBigNumbers: true });
+    try {
+      await pool.query('SELECT 1');
+    } catch (e) {
+      try { await pool.end(); } catch (_) { /* gone */ }
+      throw e;
+    }
+    return pool;
+  };
+  if (ssl === 'insecure') {
+    db = await connect({ rejectUnauthorized: false });
+  } else if (ssl && ssl !== '0' && ssl !== 'false' && ssl !== 'no') {
+    db = await connect({ rejectUnauthorized: true });
+  } else if (ssl || local) {
+    db = await connect(null);
+  } else {
+    try {
+      db = await connect({ rejectUnauthorized: true });
+    } catch (e) {
+      if (/does not support secure|SSL connection|handshake|ECONNRESET/i.test(e.message) && !/certificate|self.signed|unable to verify/i.test(e.message)) {
+        log(`database: ${host} does not take TLS (${e.message}); connecting without`);
+        db = await connect(null);
+      } else if (/certificate|self.signed|unable to verify/i.test(e.message)) {
+        throw new Error(`${e.message} (the database's certificate is not one this machine trusts: set MCLA_DB_SSL=insecure to take it anyway)`);
+      } else {
+        throw e;
+      }
+    }
   }
-  db = mysql.createPool({ ...settings, waitForConnections: true, connectionLimit: 4, charset: 'utf8mb4', supportBigNumbers: true });
   await db.query('CREATE TABLE IF NOT EXISTS mcla_store (name VARCHAR(32) NOT NULL PRIMARY KEY, version CHAR(16) NOT NULL, data LONGTEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) CHARACTER SET utf8mb4');
   await db.query('CREATE TABLE IF NOT EXISTS mcla_files (name VARCHAR(190) NOT NULL PRIMARY KEY, type VARCHAR(80) NOT NULL, size INT NOT NULL, modified BIGINT NOT NULL, data LONGBLOB NOT NULL) CHARACTER SET utf8mb4');
   for (const store of STORES) {
