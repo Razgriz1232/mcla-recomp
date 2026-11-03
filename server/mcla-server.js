@@ -238,6 +238,12 @@ async function initStorage() {
   const settings = DB_URL
     ? { uri: DB_URL }
     : { host: DB_HOST, port: Number(process.env.MCLA_DB_PORT) || 3306, user: process.env.MCLA_DB_USER || '', password: process.env.MCLA_DB_PASSWORD || '', database: process.env.MCLA_DB_NAME || '' };
+  // A managed database (a host's, not localhost) usually wants TLS: MCLA_DB_SSL=1
+  // (or "insecure" when its certificate is not one the PC knows).
+  const ssl = String(process.env.MCLA_DB_SSL || '').toLowerCase();
+  if (ssl && ssl !== '0' && ssl !== 'false' && ssl !== 'no') {
+    settings.ssl = ssl === 'insecure' ? { rejectUnauthorized: false } : { rejectUnauthorized: true };
+  }
   db = mysql.createPool({ ...settings, waitForConnections: true, connectionLimit: 4, charset: 'utf8mb4', supportBigNumbers: true });
   await db.query('CREATE TABLE IF NOT EXISTS mcla_store (name VARCHAR(32) NOT NULL PRIMARY KEY, version CHAR(16) NOT NULL, data LONGTEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) CHARACTER SET utf8mb4');
   await db.query('CREATE TABLE IF NOT EXISTS mcla_files (name VARCHAR(190) NOT NULL PRIMARY KEY, type VARCHAR(80) NOT NULL, size INT NOT NULL, modified BIGINT NOT NULL, data LONGBLOB NOT NULL) CHARACTER SET utf8mb4');
