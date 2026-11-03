@@ -63,7 +63,7 @@ JSON in and out. The game's routes need `Authorization: Bearer <game key>`; with
 | Method and path | Needs | Body | Does |
 |---|---|---|---|
 | `GET /` | | | The website. `/register`, `/login`, `/account` (`POST` for the forms and for `/logout`, `/account/key`, `/account/password`), `/leaderboard`. |
-| `GET /status` | | | Public counts, who is in the game (names and levels), the open lobbies, the ten top racers. |
+| `GET /status` | | | Public counts, who is in the game (names and levels), the open lobbies, the ten top racers, and `storage`: `database` or `files`, where the data lives. |
 | `POST /players` | key | `{mac, machineId, lanIp, port, titleId}` | Signs the account's player in. Returns `{xuid, name, publicIp}`: the identity the game takes. |
 | `POST /players/:xuid/heartbeat` | key | the same | Keeps the player and the lobbies they host alive. Every 15 s. |
 | `GET /players/:xuid` | key | | One player (for arbitration's machine ids). |

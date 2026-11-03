@@ -805,6 +805,7 @@ function publicStatus() {
   const sessions = Object.values(state.data.sessions).sort((a, b) => a.created - b.created);
   return {
     site: SITE_NAME,
+    storage: db ? 'database' : 'files',
     accounts: accounts.data.accounts.length,
     online: players.length,
     players: players.map((p) => {
